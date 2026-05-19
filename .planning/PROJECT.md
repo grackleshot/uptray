@@ -16,23 +16,25 @@ Users never miss available system updates because the tray applet silently check
 - ✓ Check AUR updates via `paru` or `yay` — existing
 - ✓ Check flatpak updates — existing
 - ✓ Send desktop notifications via `notify-send` — existing
-- ✓ PyQt6 system tray applet with badge counter — existing
+- ✓ PySide6 system tray applet with badge counter — Phase 1
 - ✓ Launch `topgrade` in detected terminal — existing
 - ✓ XDG autostart via `.desktop` file — existing
 - ✓ CLI: `--check`, `--list`, default run modes — existing
+- ✓ Modular package structure (`src/topgrade_update/`) — Phase 1
+- ✓ `pyproject.toml` with hatchling, entry points, `[gui]` extras — Phase 1
+- ✓ TOML config with XDG paths and precedence chain — Phase 1
+- ✓ Full type hints, mypy strict, ruff — Phase 1
 
 ### Active
 
-- [ ] Modular package structure (`src/topgrade_update/`) with proper Python packaging
-- [ ] Configuration system (TOML config file, XDG paths)
 - [ ] Modular update checker plugin architecture
 - [ ] Improved flatpak checker with version/branch info
 - [ ] Richer notifications (actions, quiet hours, sound)
 - [ ] Per-checker error isolation and retry logic
-- [ ] Tray enhancements (per-source breakdown, snooze, icon caching)
+- [ ] Tray enhancements (per-source breakdown, snooze)
 - [ ] Topgrade integration (respect `topgrade.toml`, dry-run preview)
 - [ ] Logging with rotation to `~/.local/share/topgrade-update/`
-- [ ] Type hints and code quality tooling (mypy, ruff)
+- [ ] Unit and GUI tests
 
 ### Out of Scope
 
@@ -57,9 +59,10 @@ Single ~400-line Python monolith. Works well for daily use but lacks extensibili
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Keep PyQt6 for tray | Existing working code, cross-DE support | ✓ Good |
-| Single-file → package | Enables testing, modular checkers, installability | - Pending |
-| TOML for config | Standard Python config format, human-editable | - Pending |
+| PySide6 over PyQt6 | LGPL license, official Qt bindings, drop-in replacement | ✓ Good |
+| Single-file → package | Enables testing, modular checkers, installability | ✓ Good |
+| TOML for config | Standard Python config format, human-editable | ✓ Good |
+| hatchling build backend | Modern PEP 517, fast, handles entry points cleanly | ✓ Good |
 
 ## Evolution
 
@@ -79,4 +82,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-19 after initialization*
+*Last updated: 2026-05-19 after Phase 1*
