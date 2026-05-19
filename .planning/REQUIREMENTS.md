@@ -24,7 +24,7 @@
 ### Modular Update Checkers
 
 - [ ] **CHECK-01**: Plugin ABC with `name`, `is_available()`, `check() -> list[Update]`
-- [ ] **CHECK-02**: Built-in plugins registered via `importlib.metadata` entry points
+- [ ] **CHECK-02**: Plugin discovery via hybrid approach — built-ins auto-registered, third-party via `importlib.metadata` entry points
 - [ ] **CHECK-03**: Pacman checker via `checkupdates` (with timeout and error isolation)
 - [ ] **CHECK-04**: AUR checker via auto-detected `paru` or `yay`
 - [ ] **CHECK-05**: Flatpak checker with version and branch info
