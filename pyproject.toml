@@ -18,6 +18,10 @@ dev = ["mypy>=1.0", "ruff>=0.5", "pytest>=8.0", "pytest-qt>=4.0"]
 [project.scripts]
 topgrade-update = "topgrade_update.cli.main:main"
 
+# Third-party plugins can register via:
+# [project.entry-points."topgrade_update.plugins"]
+# mychecker = "mypackage.plugins:MyChecker"
+
 [project.urls]
 Homepage = "https://github.com/topgrade-update/topgrade-update"
 
