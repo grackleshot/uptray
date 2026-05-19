@@ -24,7 +24,7 @@ class UpdateEngine:
     def discover_builtin(self) -> None:
         """Auto-register built-in checkers."""
         # NOTE: imports are deferred so builtins.py can be created in Plan 2
-        from topgrade_update.core.checkers.builtins import (  # type: ignore[attr-defined]
+        from topgrade_update.core.checkers.builtins import (
             AurChecker,
             FlatpakChecker,
             PacmanChecker,
