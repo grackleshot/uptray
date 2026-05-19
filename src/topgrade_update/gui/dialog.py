@@ -58,9 +58,9 @@ class UpdatesDialog(QDialog):  # type: ignore[misc]
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)
 
-        self._on_run: "Callable[[], None] | None" = None
+        self._on_run: Callable[[], None] | None = None
 
-    def set_on_run(self, callback: "Callable[[], None]") -> None:
+    def set_on_run(self, callback: Callable[[], None]) -> None:
         """Set the callback for the Run Topgrade button."""
         self._on_run = callback
 
