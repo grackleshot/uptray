@@ -4,7 +4,7 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 02 of 1 (core engine)
 status: Executing Phase 02
-last_updated: "2026-05-19T18:02:27.987Z"
+last_updated: "2026-05-19T18:11:11.155Z"
 progress:
   total_phases: 4
   completed_phases: 0
@@ -16,14 +16,14 @@ progress:
 
 **Initialized:** 2026-05-19
 **Current Phase:** 02 of 1 (core engine)
-**Phase Status:** Context gathered, ready for planning
+**Phase Status:** Pending
 
 ## Progress
 
 | Phase | Status | Plans | Progress |
 |-------|--------|-------|----------|
 | 1 — Foundation | ✓ | 3/3 | 100% |
-| 2 — Core Engine | ◆ | 0/3 | 0% |
+| 2 — Core Engine | ✓ | 3/3 | 100% |
 | 3 — User Experience | ○ | 0/3 | 0% |
 | 4 — Polish & Quality | ○ | 0/3 | 0% |
 
@@ -32,15 +32,17 @@ progress:
 See: `.planning/PROJECT.md` (updated 2026-05-19)
 
 **Core value:** Users never miss available system updates because the tray applet silently checks and clearly surfaces them.
-**Current focus:** Project structure, packaging, and configuration system
+**Current focus:** Tray applet, notifications, topgrade integration
 
 ## Active Decisions
 
 | Decision | Status |
 |----------|--------|
-| PySide6 over PyQt6 | - Pending (Phase 1) |
-| hatchling build backend | - Pending (Phase 1) |
-| importlib.metadata plugins | - Pending (Phase 2) |
+| PySide6 over PyQt6 | ✓ Good |
+| hatchling build backend | ✓ Good |
+| Hybrid plugin discovery (built-in + entry_points) | ✓ Good |
+| Process-group killing on timeout | ✓ Good |
+| Sequential checker execution | ✓ Good |
 
 ## Blockers
 
@@ -48,6 +50,6 @@ None.
 
 ## Notes
 
-- Brownfield project: existing single-file Python script
-- Auto mode: YOLO, parallel execution, all workflow agents enabled
-- Model profile: Balanced
+- Phase 2 complete: plugin ABC, UpdateEngine, process-group subprocess cleanup, built-in checkers ported
+- All CHECK-01 through CHECK-07 requirements satisfied
+- Backwards compatibility verified: `--list` and `--check` produce identical output

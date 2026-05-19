@@ -23,13 +23,13 @@
 
 ### Modular Update Checkers
 
-- [ ] **CHECK-01**: Plugin ABC with `name`, `is_available()`, `check() -> list[Update]`
-- [ ] **CHECK-02**: Plugin discovery via hybrid approach — built-ins auto-registered, third-party via `importlib.metadata` entry points
-- [ ] **CHECK-03**: Pacman checker via `checkupdates` (with timeout and error isolation)
-- [ ] **CHECK-04**: AUR checker via auto-detected `paru` or `yay`
-- [ ] **CHECK-05**: Flatpak checker with version and branch info
-- [ ] **CHECK-06**: Per-checker timeout (default 30s) and graceful error handling
-- [ ] **CHECK-07**: Failed checker does not block other checkers
+- [x] **CHECK-01**: Plugin ABC with `name`, `is_available()`, `check() -> list[Update]`
+- [x] **CHECK-02**: Plugin discovery via hybrid approach — built-ins auto-registered, third-party via `importlib.metadata` entry points
+- [x] **CHECK-03**: Pacman checker via `checkupdates` (with timeout and error isolation)
+- [x] **CHECK-04**: AUR checker via auto-detected `paru` or `yay`
+- [x] **CHECK-05**: Flatpak checker with version and branch info
+- [x] **CHECK-06**: Per-checker timeout (default 30s) and graceful error handling
+- [x] **CHECK-07**: Failed checker does not block other checkers
 
 ### Notification System
 

@@ -24,13 +24,16 @@ Users never miss available system updates because the tray applet silently check
 - ✓ `pyproject.toml` with hatchling, entry points, `[gui]` extras — Phase 1
 - ✓ TOML config with XDG paths and precedence chain — Phase 1
 - ✓ Full type hints, mypy strict, ruff — Phase 1
+- ✓ Plugin ABC (`UpdateChecker`) with `name`, `is_available()`, `check()` — Phase 2
+- ✓ Hybrid plugin discovery (built-in auto + entry_points third-party) — Phase 2
+- ✓ Process-group killing on subprocess timeout (`os.setsid` + `os.killpg`) — Phase 2
+- ✓ Per-checker error isolation (failed checker doesn't block others) — Phase 2
+- ✓ Flatpak checker with version/branch info — Phase 2
+- ✓ Backwards-compatible `check_all()` API via `UpdateEngine` — Phase 2
 
 ### Active
 
-- [ ] Modular update checker plugin architecture
-- [ ] Improved flatpak checker with version/branch info
 - [ ] Richer notifications (actions, quiet hours, sound)
-- [ ] Per-checker error isolation and retry logic
 - [ ] Tray enhancements (per-source breakdown, snooze)
 - [ ] Topgrade integration (respect `topgrade.toml`, dry-run preview)
 - [ ] Logging with rotation to `~/.local/share/topgrade-update/`
@@ -63,6 +66,9 @@ Single ~400-line Python monolith. Works well for daily use but lacks extensibili
 | Single-file → package | Enables testing, modular checkers, installability | ✓ Good |
 | TOML for config | Standard Python config format, human-editable | ✓ Good |
 | hatchling build backend | Modern PEP 517, fast, handles entry points cleanly | ✓ Good |
+| Hybrid plugin discovery | Built-ins auto-registered, third-party via entry_points | ✓ Good |
+| Process-group killing | `os.setsid` + `os.killpg()` prevents zombie children | ✓ Good |
+| Sequential execution | Simple, predictable, no threading complexity | ✓ Good |
 
 ## Evolution
 
@@ -82,4 +88,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-19 after Phase 1*
+*Last updated: 2026-05-19 after Phase 2*
