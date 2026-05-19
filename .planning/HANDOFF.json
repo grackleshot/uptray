@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "timestamp": "2026-05-19T22:49:35Z",
+  "phase": "3",
+  "phase_name": "User Experience",
+  "phase_dir": ".planning/phases/03-user-experience",
+  "plan": 1,
+  "task": 1,
+  "total_tasks": 9,
+  "status": "paused",
+  "completed_tasks": [
+    {"id": 1, "name": "Hybrid DBus notification client", "status": "done", "commit": "28d6e8f"}
+  ],
+  "remaining_tasks": [
+    {"id": 2, "name": "Notification deduplication engine", "status": "not_started"},
+    {"id": 3, "name": "Quiet hours detection and batch summary", "status": "not_started"},
+    {"id": 4, "name": "Configurable tray click action", "status": "not_started"},
+    {"id": 5, "name": "Last check timestamp in tooltip", "status": "not_started"},
+    {"id": 6, "name": "Snooze functionality in tray menu", "status": "not_started"},
+    {"id": 7, "name": "topgrade.toml parser", "status": "not_started"},
+    {"id": 8, "name": "Wire topgrade.toml into UpdateEngine", "status": "not_started"},
+    {"id": 9, "name": "End-to-end verification", "status": "not_started"}
+  ],
+  "blockers": [],
+  "human_actions_pending": [],
+  "decisions": [
+    {"decision": "Notification deduplication: notify on 0->N and count increase only", "rationale": "Prevents spam while surfacing new updates", "phase": "3"},
+    {"decision": "Quiet hours: defer notifications, batch on exit", "rationale": "Android-style DND behavior", "phase": "3"},
+    {"decision": "Tray click: configurable via tray.click_action", "rationale": "User wants explicit control", "phase": "3"},
+    {"decision": "topgrade.toml: full step awareness with category mapping", "rationale": "Transparent integration with topgrade config", "phase": "3"},
+    {"decision": "Notification actions: hybrid DBus/jeepney + notify-send fallback", "rationale": "Action buttons when available, works everywhere", "phase": "3"}
+  ],
+  "uncommitted_files": [],
+  "next_action": "Create NotificationEngine in src/topgrade_update/core/notification_engine.py with should_notify(), maybe_defer(), exit_quiet_hours()",
+  "context_notes": "Phase 3 Wave 1 Task 1.1 complete. NotificationClient uses jeepney for DBus notifications with action button support, falling back to notify-send subprocess. Next: build deduplication engine that tracks previous counts and decides whether to notify. Then quiet hours detection with deferred batching."
+}
