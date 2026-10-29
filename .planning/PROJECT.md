@@ -2,7 +2,7 @@
 
 ## What This Is
 
-A desktop update notifier and system tray applet for Linux that checks pacman, AUR, and flatpak for available updates and launches `topgrade` to apply them. Provides both CLI and GUI (PyQt6 tray icon) interfaces.
+A desktop update notifier and system tray applet for Linux that checks pacman, AUR, Flatpak, firmware, and reboot state for available updates and launches `topgrade` to apply them. Provides both CLI and GUI (PySide6 tray icon) interfaces.
 
 ## Core Value
 
@@ -22,11 +22,11 @@ Users never miss available system updates because the tray applet silently check
 - ✓ CLI: `--check`, `--list`, default run modes — existing
 - ✓ Modular package structure (`src/topgrade_update/`) — Phase 1
 - ✓ `pyproject.toml` with hatchling, entry points, `[gui]` extras — Phase 1
-- ✓ TOML config with XDG paths and precedence chain — Phase 1
+- ✓ TOML config with XDG paths and validated values — Phase 1
 - ✓ Full type hints, mypy strict, ruff — Phase 1
 - ✓ Plugin ABC (`UpdateChecker`) with `name`, `is_available()`, `check()` — Phase 2
 - ✓ Hybrid plugin discovery (built-in auto + entry_points third-party) — Phase 2
-- ✓ Process-group killing on subprocess timeout (`os.setsid` + `os.killpg`) — Phase 2
+- ✓ Process-group killing on subprocess timeout (`start_new_session` + `os.killpg`) — Phase 2
 - ✓ Per-checker error isolation (failed checker doesn't block others) — Phase 2
 - ✓ Flatpak checker with version/branch info — Phase 2
 - ✓ Backwards-compatible `check_all()` API via `UpdateEngine` — Phase 2
@@ -35,7 +35,6 @@ Users never miss available system updates because the tray applet silently check
 
 - [ ] Sound support for notifications
 - [ ] Dry-run preview before topgrade
-- [ ] GUI tests (pytest-qt) — requires PySide6 in test env
 - [ ] i18n / gettext support
 - [ ] Arch Linux news integration (NEWS-01)
 - [ ] Post-update helper reminders (MAINT-01): orphans, pacnew, cache cleanup
@@ -51,8 +50,8 @@ Users never miss available system updates because the tray applet silently check
 
 ## Context
 
-Started as a single ~400-line Python monolith. Evolved into a professional, modular Python package with:
-- 25 source files, 29 tests, full type checking
+Started as a single ~400-line Python monolith. Evolved into a modular Python package with:
+- 25 source files, 58 tests, full type checking
 - Plugin architecture with 5 built-in checkers + entry point extensibility
 - System tray applet with badge, snooze, per-source breakdown
 - Rotating file logging with per-checker timing
@@ -62,7 +61,7 @@ Started as a single ~400-line Python monolith. Evolved into a professional, modu
 
 ## Constraints
 
-- **Tech stack**: Python 3 + PyQt6 for tray; keep existing topgrade integration
+- **Tech stack**: Python 3 + PySide6 for tray; keep existing topgrade integration
 - **Compatibility**: Must not break existing CLI flags or tray behavior
 - **Scope**: Refactor and enhance; not a rewrite
 - **Platform**: Linux desktop environments with system tray support
@@ -76,7 +75,7 @@ Started as a single ~400-line Python monolith. Evolved into a professional, modu
 | TOML for config | Standard Python config format, human-editable | ✓ Good |
 | hatchling build backend | Modern PEP 517, fast, handles entry points cleanly | ✓ Good |
 | Hybrid plugin discovery | Built-ins auto-registered, third-party via entry_points | ✓ Good |
-| Process-group killing | `os.setsid` + `os.killpg()` prevents zombie children | ✓ Good |
+| Process-group killing | `start_new_session=True` + `os.killpg()` cleans up child processes | ✓ Good |
 | Sequential execution | Simple, predictable, no threading complexity | ✓ Good |
 
 ## Evolution
@@ -97,15 +96,15 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-17 after Phase 3 completion + quality improvements*
+*Last updated: 2026-10-28 after implementation review*
 
-## Quality Metrics (2026-06-17, post-review)
+## Quality Metrics (2026-10-28, post-review)
 
 | Metric | Value |
 |--------|-------|
 | Source files | 25 |
 | Test files | 12 |
-| Tests | 41 |
+| Tests | 58 |
 | `ruff check` | All passed |
 | `mypy --strict` | 0 issues |
 | CI/CD | GitHub Actions (5 Python versions) |

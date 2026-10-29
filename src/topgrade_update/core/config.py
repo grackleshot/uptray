@@ -18,7 +18,7 @@ from topgrade_update.core.models import (
 
 def _xdg_config_home() -> Path:
     """Return the XDG config directory."""
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 
 
 def default_config_path() -> Path:
@@ -57,7 +57,11 @@ def _merge_notification_config(raw: dict[str, Any]) -> NotificationConfig:
 def _merge_tray_config(raw: dict[str, Any]) -> TrayConfig:
     """Build a TrayConfig from a raw dict."""
     click_action = raw.get("click_action", "default")
-    if click_action not in {"default", "show_updates", "run_topgrade"}:
+    if not isinstance(click_action, str) or click_action not in {
+        "default",
+        "show_updates",
+        "run_topgrade",
+    }:
         raise ValueError("tray.click_action must be default, show_updates, or run_topgrade")
     snooze_hours = raw.get("snooze_hours", 4)
     if (
@@ -79,6 +83,7 @@ def _merge_custom_command(raw: dict[str, Any]) -> CustomCommandConfig:
     enabled = raw.get("enabled", True)
     if not isinstance(name, str) or not name.strip():
         raise ValueError("each sources.custom_commands entry needs a non-empty name")
+    name = name.strip()
     if not isinstance(command, list) or not command or not all(
         isinstance(arg, str) and arg for arg in command
     ):
@@ -131,9 +136,14 @@ def load_config(path: Path | None = None) -> Config:
             raise ValueError("terminals must be a list of non-empty command names")
         cfg.terminals = terminals
 
-    if "sources" in raw and isinstance(raw["sources"], dict):
-        for name, src_raw in raw["sources"].items():
-            if name == "custom_commands" and isinstance(src_raw, list):
+    if "sources" in raw:
+        sources = raw["sources"]
+        if not isinstance(sources, dict):
+            raise ValueError("sources must be a TOML table")
+        for name, src_raw in sources.items():
+            if name == "custom_commands":
+                if not isinstance(src_raw, list):
+                    raise ValueError("sources.custom_commands must be an array of tables")
                 cfg.custom_commands = [
                     _merge_custom_command(item)
                     for item in src_raw
@@ -145,13 +155,18 @@ def load_config(path: Path | None = None) -> Config:
                 if len(names) != len(set(names)):
                     raise ValueError("custom command names must be unique")
                 continue
-            if isinstance(src_raw, dict):
-                cfg.sources[name] = _merge_source_config(src_raw)
+            if not isinstance(src_raw, dict):
+                raise ValueError(f"sources.{name} must be a TOML table")
+            cfg.sources[name] = _merge_source_config(src_raw)
 
-    if "notifications" in raw and isinstance(raw["notifications"], dict):
+    if "notifications" in raw:
+        if not isinstance(raw["notifications"], dict):
+            raise ValueError("notifications must be a TOML table")
         cfg.notifications = _merge_notification_config(raw["notifications"])
 
-    if "tray" in raw and isinstance(raw["tray"], dict):
+    if "tray" in raw:
+        if not isinstance(raw["tray"], dict):
+            raise ValueError("tray must be a TOML table")
         cfg.tray = _merge_tray_config(raw["tray"])
 
     return cfg

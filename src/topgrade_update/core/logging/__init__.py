@@ -14,13 +14,8 @@ from pathlib import Path
 
 __all__ = ["RotatingFileHandler", "get_logger", "setup_logging"]
 
-_LOG_DIR = Path(
-    os.environ.get(
-        "LOG_DIR",
-        Path.home() / ".local" / "share" / "topgrade-update",
-    )
-)
-_LOG_FILE = _LOG_DIR / "log"
+_DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+_LOG_DIR = Path(os.environ.get("LOG_DIR") or _DATA_HOME / "topgrade-update")
 _MAX_BYTES = 5 * 1024 * 1024  # 5 MB
 _BACKUP_COUNT = 3
 _DATE_FMT = "%Y-%m-%d %H:%M:%S"
@@ -42,12 +37,14 @@ def setup_logging(
     root = logging.getLogger("topgrade_update")
     root.setLevel(logging.DEBUG)
 
-    # Remove any existing handlers to avoid duplicates on re-init
-    root.handlers.clear()
+    # Close old handlers as well as removing them to avoid leaking file handles.
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()
 
     # Rotating file handler — captures everything at the base level
     file_handler = RotatingFileHandler(
-        _LOG_FILE,
+        _LOG_DIR / "log",
         maxBytes=_MAX_BYTES,
         backupCount=_BACKUP_COUNT,
         encoding="utf-8",

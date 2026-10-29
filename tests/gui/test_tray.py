@@ -2,93 +2,84 @@
 
 from __future__ import annotations
 
-import pytest
 from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch
 
-from PySide6.QtWidgets import QApplication
-from topgrade_update.core.models import Config, TrayConfig
-from topgrade_update.gui.tray import Tray
+import pytest
+
+from topgrade_update.core.models import CheckResult, Config, NotificationConfig, TrayConfig, Update
+from topgrade_update.gui.tray import APP_NAME, Tray
+
 
 @pytest.fixture
-def mock_cfg():
-    """Mock configuration for the tray applet."""
+def mock_cfg() -> Config:
+    """Build a small configuration for tray tests."""
     return Config(
-        tray=TrayConfig(
-            click_action="show_updates",
-            snooze_hours=1,
-        ),
-        notifications={
-            "enabled": True,
-            "quiet_hours_start": "00:00",
-            "quiet_hours_end": "08:00",
-        },
+        tray=TrayConfig(click_action="show_updates", snooze_hours=1),
+        notifications=NotificationConfig(enabled=True),
     )
 
-def test_tray_initialization(mock_cfg):
-    """Test that the tray icon is initialized with correct values."""
-    with patch("topgrade_update.gui.tray.Tray.setIcon") as mock_set_icon, \
-         patch("topgrade_update.gui.tray.Tray.setToolTip") as mock_set_tooltip, \
-         patch("topgrade_update.gui.tray.IconCache") as mock_cache_class, \
-         patch("topgrade_update.gui.tray.QMenu") as mock_menu_class, \
-         patch("topgrade_update.gui.tray.QSystemTrayIcon.__init__", lambda *args, **kwargs: None):
-        
-        mock_cache_instance = mock_cache_class.return_value
-        mock_cache_instance.idle.return_value = "idle_icon"
-        
-        mock_menu = mock_menu_class.return_value
-        mock_menu.addAction.return_value = MagicMock()
-        
-        tray = Tray(mock_cfg)
-        
-        assert mock_cache_instance.idle.called
-        assert mock_set_tooltip.called
-        assert mock_set_icon.called
-        assert len(tray._menu.actions()) > 0
 
-def test_snooze_logic(mock_cfg):
-    """Test that snoozing correctly updates the state and tooltip."""
-    with patch("topgrade_update.gui.tray.IconCache") as mock_cache_class, \
-         patch("topgrade_update.gui.tray.QMenu") as mock_menu_class, \
-         patch("topgrade_update.gui.tray.QSystemTrayIcon.__init__", lambda *args, **kwargs: None):
-        
-        mock_cache_instance = mock_cache_class.return_value
-        mock_cache_instance.idle.return_value = "idle_icon"
-        
-        mock_menu = mock_menu_class.return_value
-        mock_menu.addAction.return_value = MagicMock()
-        
-        tray = Tray(mock_cfg)
-        
-        # Snooze for 2 hours
-        tray._snooze(2)
-        assert tray._snooze_until is not None
-        assert (datetime.now() + timedelta(hours=2)) in str(tray._snooze_until)
-        
-        # Verify update_status_action was called (implicitly checked by status action)
-        assert "2 hours" in tray._action_status.text()
+def test_tray_initialization(mock_cfg: Config, qapp) -> None:  # noqa: ANN001
+    """Build real Qt tray objects and expose the expected menu actions."""
+    tray = Tray(mock_cfg)
 
-def test_is_snoozed(mock_cfg):
-    """Test the is_snoozed helper method."""
-    with patch("topgrade_update.gui.tray.IconCache") as mock_cache_class, \
-         patch("topgrade_update.gui.tray.QMenu") as mock_menu_class, \
-         patch("topgrade_update.gui.tray.QSystemTrayIcon.__init__", lambda *args, **kwargs: None):
-        
-        mock_cache_instance = mock_cache_class.return_value
-        mock_cache_instance.idle.return_value = "idle_icon"
-        
-        mock_menu = mock_menu_class.return_value
-        mock_menu.addAction.return_value = MagicMock()
-        
-        tray = Tray(mock_cfg)
-        
-        # Initially not snoozed
-        assert tray._is_snoozed() is False
-        
-        # Snooze for 1 hour
-        tray._snooze(1)
-        assert tray._is_snoozed() is True
-        
-        # Advance time manually (mocking datetime might be cleaner but let's just check if it expires)
-        tray._snooze_until = datetime.now() - timedelta(seconds=1)
-        assert tray._is_snoozed() is False
+    assert tray.toolTip() == APP_NAME
+    assert tray.contextMenu() is not None
+    action_labels = [action.text() for action in tray.contextMenu().actions()]
+    assert "Idle" in action_labels
+    assert "Check Now" in action_labels
+    assert "View Updates" in action_labels
+    assert "Run Topgrade" in action_labels
+    assert "Quit" in action_labels
+
+
+def test_snooze_logic_updates_status_and_timer(mock_cfg: Config, qapp) -> None:  # noqa: ANN001
+    """Snoozing records a target time, updates the menu, and arms its timer."""
+    tray = Tray(mock_cfg)
+    started = datetime.now()
+
+    tray._snooze(2)
+
+    assert tray._snooze_until is not None
+    assert started + timedelta(hours=2) <= tray._snooze_until
+    assert abs((tray._snooze_until - datetime.now()).total_seconds() - 7200) < 1
+    assert tray._action_status.text().startswith("Snoozed until ")
+    assert tray._snooze_timer.isActive()
+    assert tray._snooze_timer.interval() == 7_200_000
+
+
+def test_is_snoozed_clears_expired_target(mock_cfg: Config, qapp) -> None:  # noqa: ANN001
+    """The tray recognizes active snoozes and clears expired targets."""
+    tray = Tray(mock_cfg)
+
+    assert tray._is_snoozed() is False
+    tray._snooze(1)
+    assert tray._is_snoozed() is True
+
+    tray._snooze_until = datetime.now() - timedelta(seconds=1)
+    assert tray._is_snoozed() is False
+    assert tray._snooze_until is None
+
+
+def test_partial_check_failure_is_visible_in_status_and_tooltip(
+    mock_cfg: Config,
+    qapp,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The tray reports source failures even when another source found updates."""
+    tray = Tray(mock_cfg)
+    monkeypatch.setattr("topgrade_update.gui.tray.send_notification", lambda _results: None)
+    results = [
+        CheckResult(
+            source="pacman",
+            updates=[Update("package", "1", "2", "pacman")],
+        ),
+        CheckResult(source="flatpak", error="remote unavailable"),
+    ]
+
+    tray._on_check_done(results)
+
+    assert tray._action_status.text().startswith(
+        "1 update(s) available; 1 source(s) failed"
+    )
+    assert "1 source check(s) failed" in tray.toolTip()

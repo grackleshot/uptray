@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from subprocess import CompletedProcess
 from unittest.mock import patch
+
+import pytest
 
 from topgrade_update.core.checkers.builtins import CustomCommandChecker
 
@@ -35,8 +38,26 @@ def test_custom_checker_not_available() -> None:
         assert checker.is_available() is False
 
 
-def test_custom_checker_returns_empty_on_error() -> None:
-    checker = CustomCommandChecker(["false"])
-    # Should not raise, just return empty
-    result = checker.check()
-    assert result == []
+def test_custom_checker_raises_on_command_error() -> None:
+    """A failed custom checker must not masquerade as a successful empty check."""
+    checker = CustomCommandChecker(["custom-command"])
+    failed = CompletedProcess(
+        args=["custom-command"], returncode=1, stdout="", stderr="permission denied"
+    )
+
+    with (
+        patch("topgrade_update.core.checkers.builtins.run_checked", return_value=failed),
+        pytest.raises(RuntimeError, match="permission denied"),
+    ):
+        checker.check()
+
+
+def test_custom_checker_accepts_empty_success() -> None:
+    """A successful command with no output means there are no updates."""
+    checker = CustomCommandChecker(["custom-command"])
+    successful = CompletedProcess(
+        args=["custom-command"], returncode=0, stdout="", stderr=""
+    )
+
+    with patch("topgrade_update.core.checkers.builtins.run_checked", return_value=successful):
+        assert checker.check() == []

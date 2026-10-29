@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import signal
 import subprocess
 import sys
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from topgrade_update.core.checkers import check_all, find_terminal, total_updates
 from topgrade_update.core.config import load_config
+from topgrade_update.core.logging import get_logger
 from topgrade_update.core.models import CheckResult, Config
 from topgrade_update.core.notification_engine import DeferredNotification, NotificationEngine
 from topgrade_update.core.notifications import send_message, send_notification
@@ -25,7 +27,7 @@ APP_ID = "topgrade-update"
 _ICON_NAME = "topgrade-update"
 
 
-class CheckThread(QThread):  # type: ignore[misc]
+class CheckThread(QThread):
     """Background thread for non-blocking update checks."""
 
     result = Signal(list)
@@ -44,14 +46,22 @@ class CheckThread(QThread):  # type: ignore[misc]
 
 def launch_topgrade_in_terminal(cfg: Config | None = None) -> None:
     """Launch topgrade in the user's preferred terminal."""
+    topgrade = shutil.which("topgrade")
+    if topgrade is None:
+        send_message("Topgrade not found", "Install topgrade before trying to run it.")
+        return
     term, args = find_terminal(cfg)
     if term is None:
         send_message("Error", "No terminal emulator found.")
         return
-    subprocess.Popen([term] + args + ["topgrade"])
+    try:
+        subprocess.Popen([term] + args + [topgrade])
+    except OSError as exc:
+        get_logger("tray").exception("Could not launch topgrade terminal")
+        send_message("Could not launch Topgrade", str(exc))
 
 
-class Tray(QSystemTrayIcon):  # type: ignore[misc]
+class Tray(QSystemTrayIcon):
     """System tray icon with periodic update checking."""
 
     def __init__(self, cfg: Config) -> None:
@@ -149,7 +159,7 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
             ):
                 send_notification(results)
         else:
-            if not results or any(result.error for result in results):
+            if not results or any(result.error is not None for result in results):
                 self.setIcon(self._icon_cache.idle())
             else:
                 self.setIcon(self._icon_cache.uptodate())
@@ -164,9 +174,12 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
         if self._is_snoozed() and self._snooze_until is not None:
             lines.append(snooze_label(self._snooze_until))
         total = total_updates(self._results)
+        failed_sources = sum(result.error is not None for result in self._results)
         if total > 0:
             lines.append(f"{total} update(s) available")
-        elif any(result.error for result in self._results):
+            if failed_sources:
+                lines.append(f"{failed_sources} source check(s) failed")
+        elif any(result.error is not None for result in self._results):
             lines.append("Update check failed")
         elif not self._results:
             lines.append("No update checkers available")
@@ -196,9 +209,12 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
             self._action_status.setText(snooze_label(self._snooze_until))
             return
         total = total_updates(self._results)
+        failed_sources = sum(result.error is not None for result in self._results)
         if total > 0:
             status = f"{total} update(s) available"
-        elif any(result.error for result in self._results):
+            if failed_sources:
+                status += f"; {failed_sources} source(s) failed"
+        elif any(result.error is not None for result in self._results):
             status = "Update check failed"
         elif not self._results:
             status = "No update checkers available"
@@ -243,7 +259,7 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
         if not self._results or total_updates(self._results) == 0:
             if not self._results:
                 send_message("No update checkers", "No supported update source is available.")
-            elif any(result.error for result in self._results):
+            elif any(result.error is not None for result in self._results):
                 send_message(
                     "Update check failed",
                     "One or more update sources could not be checked.",

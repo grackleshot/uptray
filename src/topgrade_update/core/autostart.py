@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 AUTOSTART_DIR = _CONFIG_HOME / "autostart"
 AUTOSTART_FILE = AUTOSTART_DIR / "topgrade-update-tray.desktop"
 

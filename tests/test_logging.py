@@ -12,11 +12,15 @@ from topgrade_update.core.logging import RotatingFileHandler, get_logger
 
 @pytest.fixture(autouse=True)
 def _reset_logger():
-    """Clear root logger handlers before and after each test."""
+    """Close and clear root logger handlers before and after each test."""
     root = logging.getLogger("topgrade_update")
-    root.handlers.clear()
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()
     yield
-    root.handlers.clear()
+    for handler in root.handlers[:]:
+        root.removeHandler(handler)
+        handler.close()
 
 
 def test_get_logger_returns_correct_name() -> None:
@@ -69,3 +73,18 @@ def test_non_verbose_no_console_handler(tmp_path: Path, monkeypatch: object) -> 
         and not isinstance(h, RotatingFileHandler)
     ]
     assert len(plain_console) == 0
+
+
+def test_setup_closes_existing_file_handler(tmp_path: Path, monkeypatch: object) -> None:
+    """Reconfiguration closes the prior rotating log file descriptor."""
+    log_dir = tmp_path / "logs"
+    import topgrade_update.core.logging as log_mod
+
+    monkeypatch.setattr(log_mod, "_LOG_DIR", log_dir)
+    log_mod.setup_logging()
+    first_handler = logging.getLogger("topgrade_update").handlers[0]
+    assert first_handler.baseFilename == str(log_dir / "log")
+
+    log_mod.setup_logging()
+
+    assert first_handler.stream is None

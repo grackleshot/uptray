@@ -18,7 +18,7 @@ TOPGRADE_STEP_MAP: dict[str, set[str]] = {
 
 
 def _xdg_config_home() -> Path:
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 
 
 def find_topgrade_toml() -> Path | None:

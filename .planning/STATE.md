@@ -69,5 +69,5 @@ None.
   - CI/CD: GitHub Actions workflow (ruff, mypy, pytest, build)
   - Comprehensive README with architecture docs
   - LICENSE file (MIT)
-  - Test suite: 29 tests (up from 18)
+  - Test suite: 58 tests (up from 29)
   - Quality: ruff + mypy strict pass on all 25 source files

@@ -9,8 +9,8 @@
 
 ## Features
 
-- **System tray applet** with real-time update checking and badge counter
-- **Multi-source checking**: pacman, AUR (paru/yay), Flatpak, firmware (fwupdmgr)
+- **System tray applet** with periodic update checking and a badge counter
+- **Multi-source checking**: pacman, AUR (paru/yay), Flatpak version and branch, firmware, reboot state
 - **Smart notifications**: deduplication, quiet hours, snooze
 - **Topgrade integration**: respects your `topgrade.toml`, launches in your preferred terminal
 - **Plugin architecture**: add custom checkers via entry points
@@ -70,6 +70,9 @@ Create `~/.config/topgrade-update/config.toml`:
 # Check interval in seconds (default: 3600; allowed range: 300–86400)
 check_interval = 3600
 
+# Terminal emulator priority (first available wins)
+terminals = ["konsole", "alacritty", "kitty", "xterm"]
+
 # Per-source enable/disable
 [sources.pacman]
 enabled = true
@@ -93,9 +96,6 @@ quiet_hours_end = 7     # 7 AM
 [tray]
 click_action = "default"  # "default", "show_updates", "run_topgrade"
 snooze_hours = 4
-
-# Terminal emulator priority (first available wins)
-terminals = ["konsole", "alacritty", "kitty", "xterm"]
 ```
 
 ### Plugin architecture

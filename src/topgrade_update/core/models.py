@@ -13,6 +13,7 @@ class Update:
     old_version: str
     new_version: str
     source: str
+    branch: str | None = None
 
 
 @dataclass

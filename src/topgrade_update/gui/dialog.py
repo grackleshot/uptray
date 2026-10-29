@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 APP_NAME = "Topgrade Update"
 
 
-class UpdatesDialog(QDialog):  # type: ignore[misc]
+class UpdatesDialog(QDialog):
     """Dialog showing available updates with a Run Topgrade button."""
 
     def __init__(self, results: list[CheckResult], parent: QDialog | None = None) -> None:
@@ -43,7 +43,13 @@ class UpdatesDialog(QDialog):  # type: ignore[misc]
             if r.updates:
                 lines.append(f"{r.source} ({len(r.updates)})")
                 for up in r.updates:
-                    lines.append(f"  {up.name} {up.old_version} → {up.new_version}")
+                    branch = f" ({up.branch})" if up.branch else ""
+                    lines.append(
+                        f"  {up.name}{branch} {up.old_version} → {up.new_version}"
+                    )
+                lines.append("")
+            if r.error is not None:
+                lines.append(f"{r.source}: check failed — {r.error}")
                 lines.append("")
         text.setPlainText("\n".join(lines))
         layout.addWidget(text)

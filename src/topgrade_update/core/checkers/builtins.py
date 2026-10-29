@@ -125,6 +125,7 @@ class FlatpakChecker(UpdateChecker):
                         old_version="?",
                         new_version=parts[1],
                         source=self.name,
+                        branch=parts[2] if len(parts) >= 3 and parts[2] else None,
                     )
                 )
         return updates
@@ -180,7 +181,7 @@ def _parse_fwupd_output(output: str) -> list[Update]:
         return updates
 
     # Retain support for older fwupd text output and test fixtures.
-    updates: list[Update] = []
+    text_updates: list[Update] = []
     device_name: str | None = None
     in_updates = False
     for raw_line in output.splitlines():
@@ -207,13 +208,13 @@ def _parse_fwupd_output(output: str) -> list[Update]:
             after = stripped[idx + 2:].strip()
             before_parts = before.split()
             if len(before_parts) >= 2 and device_name:
-                updates.append(Update(
+                text_updates.append(Update(
                     name=f"{device_name}: {before_parts[0]}",
                     old_version=before_parts[1] if len(before_parts) > 1 else "?",
                     new_version=after,
                     source="firmware",
                 ))
-    return updates
+    return text_updates
 
 
 class CustomCommandChecker(UpdateChecker):
@@ -254,7 +255,9 @@ class CustomCommandChecker(UpdateChecker):
 
     def check(self) -> list[Update]:
         r = run_checked(self._command)
-        if r.returncode != 0 or not r.stdout.strip():
+        if r.returncode != 0:
+            raise _command_error(self._command, r.returncode, r.stderr)
+        if not r.stdout.strip():
             return []
         updates: list[Update] = []
         for line in r.stdout.strip().splitlines():

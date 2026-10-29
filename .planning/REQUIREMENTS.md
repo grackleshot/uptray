@@ -7,18 +7,18 @@
 
 ### Project Structure & Packaging
 
-- [ ] **PACK-01**: Code organized as `src/topgrade_update/` package with proper module boundaries
-- [ ] **PACK-02**: `pyproject.toml` with hatchling backend, entry points, and `[gui]` optional dependency
-- [ ] **PACK-03**: CLI entry point `topgrade-update` works with zero GUI dependencies installed
-- [ ] **PACK-04**: `python -m topgrade_update` support via `__main__.py`
+- [x] **PACK-01**: Code organized as `src/topgrade_update/` package with proper module boundaries
+- [x] **PACK-02**: `pyproject.toml` with hatchling backend, entry points, and `[gui]` optional dependency
+- [x] **PACK-03**: CLI entry point `topgrade-update` works with zero GUI dependencies installed
+- [x] **PACK-04**: `python -m topgrade_update` support via `__main__.py`
 
 ### Configuration System
 
-- [ ] **CONF-01**: TOML config file at `~/.config/topgrade-update/config.toml`
-- [ ] **CONF-02**: Configurable check interval (default 60 min, bounds: 5 min – 24 h)
-- [ ] **CONF-03**: Per-source enable/disable (pacman, AUR, flatpak)
-- [ ] **CONF-04**: Configurable terminal emulator priority list
-- [ ] **CONF-05**: Notification settings (enable/disable, quiet hours start/end)
+- [x] **CONF-01**: TOML config file at `~/.config/topgrade-update/config.toml`
+- [x] **CONF-02**: Configurable check interval (default 60 min, bounds: 5 min – 24 h)
+- [x] **CONF-03**: Per-source enable/disable (pacman, AUR, flatpak)
+- [x] **CONF-04**: Configurable terminal emulator priority list
+- [x] **CONF-05**: Notification settings (enable/disable, quiet hours start/end)
 - [ ] **CONF-06**: Config loaded with precedence: CLI args > env vars > config file > defaults
 
 ### Modular Update Checkers
@@ -33,29 +33,29 @@
 
 ### Notification System
 
-- [ ] **NOTIFY-01**: Desktop notification on transition from 0 to >0 updates
-- [ ] **NOTIFY-02**: Notification includes source breakdown (e.g., "5 packages, 2 AUR")
-- [ ] **NOTIFY-03**: No re-notification for same update count on subsequent checks
-- [ ] **NOTIFY-04**: Quiet hours respected (no notifications during configured window)
+- [x] **NOTIFY-01**: Desktop notification on transition from 0 to >0 updates
+- [x] **NOTIFY-02**: Notification includes source breakdown (e.g., "5 packages, 2 AUR")
+- [x] **NOTIFY-03**: No re-notification for same update count on subsequent checks
+- [x] **NOTIFY-04**: Quiet hours respected (no notifications during configured window)
 - [ ] **NOTIFY-05**: Notification actions: "Run Topgrade", "Dismiss"
 
 ### Tray Applet
 
-- [ ] **TRAY-01**: System tray icon with state: idle, checking, up-to-date, updates-available
-- [ ] **TRAY-02**: Badge count on icon when updates available
-- [ ] **TRAY-03**: Context menu: status, check now, view updates, run topgrade, quit
-- [ ] **TRAY-04**: Left-click shows updates dialog (if updates) or runs topgrade (if none)
-- [ ] **TRAY-05**: Updates dialog shows per-source breakdown with package names
-- [ ] **TRAY-06**: "Run Topgrade" button in updates dialog launches terminal
-- [ ] **TRAY-07**: Icon caching — do not regenerate pixmap on every check
-- [ ] **TRAY-08**: Last check timestamp shown in tooltip or menu
-- [ ] **TRAY-09**: Tray persists when dialog closed (`setQuitOnLastWindowClosed(False)`)
+- [x] **TRAY-01**: System tray icon with state: idle, checking, up-to-date, updates-available
+- [x] **TRAY-02**: Badge count on icon when updates available
+- [x] **TRAY-03**: Context menu: status, check now, view updates, run topgrade, quit
+- [x] **TRAY-04**: Left-click shows updates dialog (if updates) or runs topgrade (if none)
+- [x] **TRAY-05**: Updates dialog shows per-source breakdown with package names
+- [x] **TRAY-06**: "Run Topgrade" button in updates dialog launches terminal
+- [x] **TRAY-07**: Icon caching — do not regenerate pixmap on every check
+- [x] **TRAY-08**: Last check timestamp shown in tooltip or menu
+- [x] **TRAY-09**: Tray persists when dialog closed (`setQuitOnLastWindowClosed(False)`)
 
 ### Topgrade Integration
 
-- [ ] **TG-01**: Launch `topgrade` in detected terminal emulator
-- [ ] **TG-02**: Terminal detection: `xdg-terminal-exec`, `$TERMINAL`, then ranked fallbacks
-- [ ] **TG-03**: Parse `topgrade.toml` to skip checkers disabled there
+- [x] **TG-01**: Launch `topgrade` in detected terminal emulator
+- [x] **TG-02**: Terminal detection: `xdg-terminal-exec`, `$TERMINAL`, then ranked fallbacks
+- [x] **TG-03**: Parse `topgrade.toml` to skip checkers disabled there
 
 ### Logging & Observability
 
@@ -68,8 +68,8 @@
 - [x] **QUAL-01**: Full type hints across codebase
 - [x] **QUAL-02**: `mypy --strict` passes
 - [x] **QUAL-03**: `ruff` for linting and formatting
-- [x] **QUAL-04**: Unit tests for core logic (config, checkers, engine) — 29 tests
-- [ ] **QUAL-05**: `pytest-qt` tests for tray GUI components — requires PySide6 in test env
+- [x] **QUAL-04**: Unit tests for core logic (config, checkers, engine) — 58 tests
+- [x] **QUAL-05**: `pytest-qt` tests for tray GUI components — requires PySide6 in test env
 
 ### Additional Checkers
 
@@ -106,15 +106,15 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| PACK-01 | Phase 1 | Pending |
-| PACK-02 | Phase 1 | Pending |
-| PACK-03 | Phase 1 | Pending |
-| PACK-04 | Phase 1 | Pending |
-| CONF-01 | Phase 2 | Pending |
-| CONF-02 | Phase 2 | Pending |
-| CONF-03 | Phase 2 | Pending |
-| CONF-04 | Phase 2 | Pending |
-| CONF-05 | Phase 2 | Pending |
+| PACK-01 | Phase 1 | Complete |
+| PACK-02 | Phase 1 | Complete |
+| PACK-03 | Phase 1 | Complete |
+| PACK-04 | Phase 1 | Complete |
+| CONF-01 | Phase 2 | Complete |
+| CONF-02 | Phase 2 | Complete |
+| CONF-03 | Phase 2 | Complete |
+| CONF-04 | Phase 2 | Complete |
+| CONF-05 | Phase 2 | Complete |
 | CONF-06 | Phase 2 | Pending |
 | CHECK-01 | Phase 3 | Complete |
 | CHECK-02 | Phase 3 | Complete |
@@ -123,41 +123,41 @@
 | CHECK-05 | Phase 3 | Complete |
 | CHECK-06 | Phase 3 | Complete |
 | CHECK-07 | Phase 3 | Complete |
-| NOTIFY-01 | Phase 4 | Pending |
-| NOTIFY-02 | Phase 4 | Pending |
-| NOTIFY-03 | Phase 4 | Pending |
-| NOTIFY-04 | Phase 4 | Pending |
-| NOTIFY-05 | Phase 4 | ✓ Complete |
-| TRAY-01 | Phase 5 | ✓ Complete |
-| TRAY-02 | Phase 5 | ✓ Complete |
-| TRAY-03 | Phase 5 | ✓ Complete |
-| TRAY-04 | Phase 5 | ✓ Complete |
-| TRAY-05 | Phase 5 | ✓ Complete |
-| TRAY-06 | Phase 5 | ✓ Complete |
-| TRAY-07 | Phase 5 | ✓ Complete |
-| TRAY-08 | Phase 5 | ✓ Complete |
-| TRAY-09 | Phase 5 | ✓ Complete |
-| TG-01 | Phase 6 | ✓ Complete |
-| TG-02 | Phase 6 | ✓ Complete |
-| TG-03 | Phase 6 | ✓ Complete |
-| LOG-01 | Phase 7 | ✓ Complete |
-| LOG-02 | Phase 7 | ✓ Complete |
-| LOG-03 | Phase 7 | ✓ Complete |
-| QUAL-01 | Phase 8 | ✓ Complete |
-| QUAL-02 | Phase 8 | ✓ Complete |
-| QUAL-03 | Phase 8 | ✓ Complete |
-| QUAL-04 | Phase 8 | ✓ Complete |
-| QUAL-05 | Phase 8 | Pending (needs PySide6) |
-| CHECK-08 | Phase 8 | ✓ Complete |
-| CHECK-09 | Phase 8 | ✓ Complete |
-| REBOOT-01 | Phase 8 | ✓ Complete |
+| NOTIFY-01 | Phase 4 | Complete |
+| NOTIFY-02 | Phase 4 | Complete |
+| NOTIFY-03 | Phase 4 | Complete |
+| NOTIFY-04 | Phase 4 | Complete |
+| NOTIFY-05 | Phase 4 | Pending |
+| TRAY-01 | Phase 5 | Complete |
+| TRAY-02 | Phase 5 | Complete |
+| TRAY-03 | Phase 5 | Complete |
+| TRAY-04 | Phase 5 | Complete |
+| TRAY-05 | Phase 5 | Complete |
+| TRAY-06 | Phase 5 | Complete |
+| TRAY-07 | Phase 5 | Complete |
+| TRAY-08 | Phase 5 | Complete |
+| TRAY-09 | Phase 5 | Complete |
+| TG-01 | Phase 6 | Complete |
+| TG-02 | Phase 6 | Complete |
+| TG-03 | Phase 6 | Complete |
+| LOG-01 | Phase 7 | Complete |
+| LOG-02 | Phase 7 | Complete |
+| LOG-03 | Phase 7 | Complete |
+| QUAL-01 | Phase 8 | Complete |
+| QUAL-02 | Phase 8 | Complete |
+| QUAL-03 | Phase 8 | Complete |
+| QUAL-04 | Phase 8 | Complete |
+| QUAL-05 | Phase 8 | Complete |
+| CHECK-08 | Phase 8 | Complete |
+| CHECK-09 | Phase 8 | Complete |
+| REBOOT-01 | Phase 8 | Complete |
 
 **Coverage:**
-- v1 requirements: 34 total
-- Mapped to phases: 34
+- v1 requirements: 45 total
+- Mapped to phases: 45
 - Unmapped: 0 ✓
-- Complete: 33/34 (97%) — review loop fixed 4 critical bugs
+- Complete: 43/45 (96%)
 
 ---
 *Requirements defined: 2026-05-19*
-*Last updated: 2026-06-17 post-review loop*
+*Last updated: 2026-10-28 after implementation review*

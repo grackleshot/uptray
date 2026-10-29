@@ -21,7 +21,7 @@ APP_NAME = "Topgrade Update"
 
 def _report_checker_errors(results: list[CheckResult]) -> bool:
     """Print checker failures to stderr and report whether any occurred."""
-    errors = [result for result in results if result.error]
+    errors = [result for result in results if result.error is not None]
     for result in errors:
         print(f"Error checking {result.source}: {result.error}", file=sys.stderr)
     return bool(errors)
@@ -42,7 +42,7 @@ def cmd_check(cfg: Config, verbose: bool = False) -> int:
                 r.source,
                 len(r.updates),
                 r.duration_ms,
-                f" error={r.error}" if r.error else "",
+                f" error={r.error}" if r.error is not None else "",
             )
     has_errors = _report_checker_errors(results)
     total = total_updates(results)
@@ -92,7 +92,8 @@ def cmd_list(cfg: Config, *, json_output: bool = False) -> int:
         if r.updates:
             print(f"\n{r.source} ({len(r.updates)}):")
             for up in r.updates:
-                print(f"  {up.name} {up.old_version} -> {up.new_version}")
+                branch = f" ({up.branch})" if up.branch else ""
+                print(f"  {up.name}{branch} {up.old_version} -> {up.new_version}")
     print(f"\nTotal: {total} update(s)")
     return 2 if has_errors else 0
 
@@ -101,7 +102,7 @@ def _print_json(results: list[CheckResult], total: int) -> None:
     """Print results as JSON to stdout."""
     sources: dict[str, dict[str, object]] = {}
     for r in results:
-        if r.updates or r.error:
+        if r.updates or r.error is not None:
             update_list: list[dict[str, str]] = []
             for up in r.updates:
                 update_list.append({
@@ -109,8 +110,10 @@ def _print_json(results: list[CheckResult], total: int) -> None:
                     "old_version": up.old_version,
                     "new_version": up.new_version,
                 })
+                if up.branch:
+                    update_list[-1]["branch"] = up.branch
             entry: dict[str, object] = {"updates": update_list}
-            if r.error:
+            if r.error is not None:
                 entry["error"] = r.error
             entry["duration_ms"] = r.duration_ms
             sources[r.source] = entry
