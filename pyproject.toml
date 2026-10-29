@@ -9,7 +9,7 @@ description = "An interactive update notifier & applier using topgrade"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["tomli>=2; python_version < '3.11'"]
 
 [project.optional-dependencies]
 gui = ["PySide6>=6.5", "jeepney>=0.8"]
@@ -23,10 +23,14 @@ topgrade-update = "topgrade_update.cli.main:main"
 # mychecker = "mypackage.plugins:MyChecker"
 
 [project.urls]
-Homepage = "https://github.com/topgrade-update/topgrade-update"
+Homepage = "https://github.com/grackleshot/topgrade-update"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/topgrade_update"]
+
+[tool.hatch.build.targets.wheel.shared-data]
+"icons/hicolor/scalable/apps/topgrade-update.svg" = "share/icons/hicolor/scalable/apps/topgrade-update.svg"
+"topgrade-update-tray.desktop" = "share/applications/topgrade-update-tray.desktop"
 
 [tool.mypy]
 python_version = "3.10"

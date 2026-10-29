@@ -23,23 +23,28 @@ def run_checked(
 ) -> CompletedProcess[str]:
     """Run a command with timeout, killing the entire process group on expiry.
 
-    Uses os.setsid to create a new process group, then os.killpg to kill
-    all children (e.g. git, makepkg spawned by paru/yay) on TimeoutExpired.
+    Starts a new session for each command, then signals its process group on
+    timeout so child processes (such as AUR build helpers) are cleaned up too.
     """
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE if capture_output else None,
         stderr=subprocess.PIPE if capture_output else None,
         text=text,
-        preexec_fn=os.setsid,
+        start_new_session=True,
     )
     try:
         stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as timeout_error:
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        proc.wait()
-        raise
+            os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+        raise timeout_error
     return subprocess.CompletedProcess(
         args=cmd,
         returncode=proc.returncode,

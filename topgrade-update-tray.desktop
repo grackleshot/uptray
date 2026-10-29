@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Topgrade Update
+Comment=System tray applet for topgrade update notifications
+Exec=topgrade-update --tray
+Icon=topgrade-update
+Terminal=false
+X-KDE-autostart-phase=2
+Categories=System;Utilities;
+Keywords=updates;pacman;aur;flatpak;topgrade;

@@ -99,7 +99,8 @@ class NotificationClient:
         )
         try:
             reply = self._bus.send_and_get_reply(msg)
-            return reply[0] if reply else None
+            reply_body = getattr(reply, "body", ())
+            return reply_body[0] if reply_body else None
         except Exception:
             self._notify_send(summary, body)
             return None
@@ -148,12 +149,16 @@ def _format_body(results: list[CheckResult]) -> str:
 def send_notification(
     results: list[CheckResult],
     actions: list[tuple[str, str]] | None = None,
+    summary: str | None = None,
+    body: str | None = None,
 ) -> int | None:
     """Send a desktop notification summarising available updates.
 
     Args:
         results: List of check results from all sources.
         actions: Optional action buttons for DBus notifications.
+        summary: Optional notification title override.
+        body: Optional notification body override.
 
     Returns:
         Notification ID if DBus was used, None otherwise.
@@ -162,8 +167,13 @@ def send_notification(
     if total == 0:
         return None
 
-    summary = f"{total} update(s) available"
-    body = _format_body(results)
+    notification_summary = summary or f"{total} update(s) available"
+    notification_body = body or _format_body(results)
 
     client = NotificationClient()
-    return client.notify(summary, body, actions)
+    return client.notify(notification_summary, notification_body, actions)
+
+
+def send_message(summary: str, body: str) -> int | None:
+    """Send a desktop notification without requiring update results."""
+    return NotificationClient().notify(summary, body)

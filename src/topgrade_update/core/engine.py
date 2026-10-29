@@ -6,6 +6,8 @@ import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING
 
+from topgrade_update.core.logging import get_logger
+
 if TYPE_CHECKING:
     from topgrade_update.core.models import CheckResult, Config
     from topgrade_update.core.provider import UpdateChecker
@@ -19,6 +21,10 @@ class UpdateEngine:
 
     def register(self, checker: UpdateChecker) -> None:
         """Register a checker instance."""
+        if checker.name in self._checkers:
+            get_logger("engine").warning(
+                "Replacing duplicate checker registration: %s", checker.name
+            )
         self._checkers[checker.name] = checker
 
     def discover_builtin(self) -> None:
@@ -26,36 +32,57 @@ class UpdateEngine:
         # NOTE: imports are deferred so builtins.py can be created in Plan 2
         from topgrade_update.core.checkers.builtins import (
             AurChecker,
+            FirmwareChecker,
             FlatpakChecker,
             PacmanChecker,
         )
+        from topgrade_update.core.checkers.reboot import RebootRequiredChecker
 
-        for cls in (PacmanChecker, AurChecker, FlatpakChecker):
+        for cls in (
+            PacmanChecker,
+            AurChecker,
+            FlatpakChecker,
+            FirmwareChecker,
+            RebootRequiredChecker,
+        ):
             self.register(cls())
 
     def discover_entry_points(self) -> None:
         """Register third-party checkers from entry_points."""
         from importlib.metadata import entry_points
 
+        log = get_logger("engine")
         eps = entry_points(group="topgrade_update.plugins")
         for ep in eps:
             try:
                 checker_cls = ep.load()
                 self.register(checker_cls())
-            except Exception:
+            except Exception as exc:
+                log.warning("Could not load update checker plugin %s: %s", ep.name, exc)
                 continue
 
     def available(self) -> Iterator[UpdateChecker]:
         """Yield checkers that are available on this system."""
+        log = get_logger("engine")
         for c in self._checkers.values():
-            if c.is_available():
+            try:
+                is_available = c.is_available()
+            except Exception as exc:
+                log.warning("Checker %s availability probe failed: %s", c.name, exc)
+                continue
+            if is_available:
                 yield c
 
-    def check_all(self, cfg: Config | None = None) -> list[CheckResult]:
+    def check_all(
+        self,
+        cfg: Config | None = None,
+        topgrade_disabled: set[str] | None = None,
+    ) -> list[CheckResult]:
         """Run all enabled and available checkers with error isolation.
 
         Args:
             cfg: Configuration for filtering enabled sources.
+            topgrade_disabled: Checker names disabled by topgrade.toml.
 
         Returns:
             List of CheckResult, one per checker attempted.
@@ -65,8 +92,21 @@ class UpdateEngine:
         if cfg is None:
             cfg = Config()
 
+        if cfg.custom_commands:
+            from topgrade_update.core.checkers.builtins import CustomCommandChecker
+
+            for custom in cfg.custom_commands:
+                if custom.enabled:
+                    self.register(CustomCommandChecker(custom.command, custom.name))
+
         results: list[CheckResult] = []
-        for checker in self.available():
+        log = get_logger("engine")
+        available_checkers = list(self.available())
+        log.info("Starting update check with %d available checkers", len(available_checkers))
+
+        for checker in available_checkers:
+            if topgrade_disabled and checker.name in topgrade_disabled:
+                continue
             src_cfg = cfg.sources.get(checker.name, SourceConfig())
             if not src_cfg.enabled:
                 continue
@@ -79,11 +119,23 @@ class UpdateEngine:
                     updates=updates,
                     duration_ms=int((time.monotonic() - start) * 1000),
                 )
+                log.info(
+                    "Checker %s: %d updates in %dms",
+                    checker.name,
+                    len(updates),
+                    result.duration_ms,
+                )
             except Exception as exc:
                 result = CheckResult(
                     source=checker.name,
                     error=str(exc),
                     duration_ms=int((time.monotonic() - start) * 1000),
+                )
+                log.warning(
+                    "Checker %s failed after %dms: %s",
+                    checker.name,
+                    result.duration_ms,
+                    exc,
                 )
             results.append(result)
 

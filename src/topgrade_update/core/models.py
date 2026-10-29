@@ -47,6 +47,23 @@ class NotificationConfig:
 
 
 @dataclass
+class TrayConfig:
+    """System tray behavior settings."""
+
+    click_action: str = "default"  # "default", "show_updates", "run_topgrade"
+    snooze_hours: int = 4
+
+
+@dataclass
+class CustomCommandConfig:
+    """Configuration for one user-defined update checker command."""
+
+    name: str
+    command: list[str]
+    enabled: bool = True
+
+
+@dataclass
 class Config:
     """Application configuration."""
 
@@ -67,3 +84,5 @@ class Config:
         ]
     )
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
+    tray: TrayConfig = field(default_factory=TrayConfig)
+    custom_commands: list[CustomCommandConfig] = field(default_factory=list)

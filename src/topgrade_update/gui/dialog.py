@@ -41,11 +41,11 @@ class UpdatesDialog(QDialog):  # type: ignore[misc]
         lines: list[str] = []
         for r in results:
             if r.updates:
-                lines.append(f"<b>{r.source} ({len(r.updates)})</b>")
+                lines.append(f"{r.source} ({len(r.updates)})")
                 for up in r.updates:
-                    lines.append(f"&nbsp;&nbsp;{up.name} {up.old_version} → {up.new_version}")
+                    lines.append(f"  {up.name} {up.old_version} → {up.new_version}")
                 lines.append("")
-        text.setHtml("<br>".join(lines))
+        text.setPlainText("\n".join(lines))
         layout.addWidget(text)
 
         btn_row = QHBoxLayout()

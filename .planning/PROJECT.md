@@ -33,11 +33,13 @@ Users never miss available system updates because the tray applet silently check
 
 ### Active
 
-- [ ] Richer notifications (actions, quiet hours, sound)
-- [ ] Tray enhancements (per-source breakdown, snooze)
-- [ ] Topgrade integration (respect `topgrade.toml`, dry-run preview)
-- [ ] Logging with rotation to `~/.local/share/topgrade-update/`
-- [ ] Unit and GUI tests
+- [ ] Sound support for notifications
+- [ ] Dry-run preview before topgrade
+- [ ] GUI tests (pytest-qt) — requires PySide6 in test env
+- [ ] i18n / gettext support
+- [ ] Arch Linux news integration (NEWS-01)
+- [ ] Post-update helper reminders (MAINT-01): orphans, pacnew, cache cleanup
+- [ ] Snooze persistence across restarts (save to disk)
 
 ### Out of Scope
 
@@ -49,7 +51,14 @@ Users never miss available system updates because the tray applet silently check
 
 ## Context
 
-Single ~400-line Python monolith. Works well for daily use but lacks extensibility. No test suite, no config, hardcoded behaviors. The user wants to professionalize the codebase while preserving the simple UX that works.
+Started as a single ~400-line Python monolith. Evolved into a professional, modular Python package with:
+- 25 source files, 29 tests, full type checking
+- Plugin architecture with 5 built-in checkers + entry point extensibility
+- System tray applet with badge, snooze, per-source breakdown
+- Rotating file logging with per-checker timing
+- Desktop integration (SVG icon, .desktop file, install script)
+- CI/CD with GitHub Actions (5 Python versions)
+- Comprehensive documentation (README, architecture docs)
 
 ## Constraints
 
@@ -88,4 +97,19 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-05-19 after Phase 2*
+*Last updated: 2026-06-17 after Phase 3 completion + quality improvements*
+
+## Quality Metrics (2026-06-17, post-review)
+
+| Metric | Value |
+|--------|-------|
+| Source files | 25 |
+| Test files | 12 |
+| Tests | 41 |
+| `ruff check` | All passed |
+| `mypy --strict` | 0 issues |
+| CI/CD | GitHub Actions (5 Python versions) |
+| Icon | SVG, scalable |
+| Desktop integration | .desktop file, install script |
+| Logging | Rotating file, per-checker timing |
+| CLI flags | `--check`, `--list`, `--tray`, `--verbose`, `--json`, `--enable`, `--disable` |

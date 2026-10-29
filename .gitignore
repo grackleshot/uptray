@@ -20,3 +20,6 @@ Thumbs.db
 
 # Legacy
 *.legacy
+
+# Logs
+.local/share/topgrade-update/log

@@ -7,6 +7,14 @@ import shutil
 from typing import TYPE_CHECKING
 
 from topgrade_update.core.engine import UpdateEngine
+from topgrade_update.core.logging import get_logger
+from topgrade_update.core.topgrade_config import (
+    find_topgrade_toml,
+    get_disabled_categories,
+    get_disabled_steps,
+    load_topgrade_config,
+    map_disabled_checkers,
+)
 
 if TYPE_CHECKING:
     from topgrade_update.core.models import CheckResult, Config
@@ -20,9 +28,27 @@ def _get_engine() -> UpdateEngine:
     return engine
 
 
+def _get_topgrade_disabled_checkers() -> set[str]:
+    """Return checker names disabled by topgrade.toml."""
+    path = find_topgrade_toml()
+    if path is None:
+        return set()
+
+    try:
+        topgrade_cfg = load_topgrade_config(path)
+    except (OSError, ValueError) as exc:
+        get_logger("checkers").warning("Could not read Topgrade config %s: %s", path, exc)
+        return set()
+    disabled_topgrade_names = get_disabled_steps(topgrade_cfg) | get_disabled_categories(
+        topgrade_cfg
+    )
+    return map_disabled_checkers(disabled_topgrade_names)
+
+
 def check_all(cfg: Config | None = None) -> list[CheckResult]:
     """Run all enabled checkers and return results."""
-    return _get_engine().check_all(cfg)
+    topgrade_disabled = _get_topgrade_disabled_checkers()
+    return _get_engine().check_all(cfg, topgrade_disabled=topgrade_disabled)
 
 
 def total_updates(results: list[CheckResult]) -> int:

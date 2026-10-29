@@ -5,21 +5,20 @@ from __future__ import annotations
 import signal
 import subprocess
 import sys
-from datetime import datetime
-from typing import TYPE_CHECKING
+from datetime import datetime, timedelta
 
 from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from topgrade_update.core.checkers import check_all, find_terminal, total_updates
 from topgrade_update.core.config import load_config
-from topgrade_update.core.models import Config
-from topgrade_update.core.notifications import send_notification
+from topgrade_update.core.models import CheckResult, Config
+from topgrade_update.core.notification_engine import DeferredNotification, NotificationEngine
+from topgrade_update.core.notifications import send_message, send_notification
+from topgrade_update.core.quiet_hours import is_quiet_hours
 from topgrade_update.gui.dialog import UpdatesDialog
 from topgrade_update.gui.icons import IconCache
-
-if TYPE_CHECKING:
-    from topgrade_update.core.models import CheckResult
+from topgrade_update.gui.tray_logic import is_snoozed, snooze_label
 
 APP_NAME = "Topgrade Update"
 APP_ID = "topgrade-update"
@@ -36,7 +35,10 @@ class CheckThread(QThread):  # type: ignore[misc]
         self._cfg = cfg
 
     def run(self) -> None:
-        results: list[CheckResult] = check_all(self._cfg)
+        try:
+            results = check_all(self._cfg)
+        except Exception as exc:
+            results = [CheckResult(source="update check", error=str(exc))]
         self.result.emit(results)
 
 
@@ -44,9 +46,7 @@ def launch_topgrade_in_terminal(cfg: Config | None = None) -> None:
     """Launch topgrade in the user's preferred terminal."""
     term, args = find_terminal(cfg)
     if term is None:
-        subprocess.Popen(
-            ["notify-send", "-a", APP_NAME, "Error", "No terminal emulator found."]
-        )
+        send_message("Error", "No terminal emulator found.")
         return
     subprocess.Popen([term] + args + ["topgrade"])
 
@@ -58,10 +58,14 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
         super().__init__()
         self._cfg = cfg
         self._results: list[CheckResult] = []
-        self._prev_total = -1
         self._last_check: datetime | None = None
+        self._snooze_until: datetime | None = None
+        self._notification_engine = NotificationEngine()
         self._icon_cache = IconCache()
         self._check_thread: CheckThread | None = None
+        self._snooze_timer = QTimer()
+        self._snooze_timer.setSingleShot(True)
+        self._snooze_timer.timeout.connect(self._on_snooze_expired)
 
         self.setIcon(self._icon_cache.idle())
         self.setToolTip(APP_NAME)
@@ -71,10 +75,19 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
         self._action_status = self._menu.addAction("Idle")
         self._action_status.setEnabled(False)
         self._menu.addSeparator()
-        self._menu.addAction("Check Now", self._start_check)
+        self._menu.addAction("Check Now", self._check_now)
         self._menu.addAction("View Updates", self._show_updates)
         self._menu.addSeparator()
         self._menu.addAction("Run Topgrade", self._run_topgrade)
+        self._menu.addSeparator()
+        snooze_menu = self._menu.addMenu("Snooze")
+        snooze_menu.addAction("Snooze 1 hour", lambda: self._snooze(1))
+        snooze_menu.addAction(
+            f"Snooze {cfg.tray.snooze_hours} hours",
+            lambda: self._snooze(cfg.tray.snooze_hours),
+        )
+        snooze_menu.addAction("Snooze until tomorrow", lambda: self._snooze(24))
+        snooze_menu.addAction("Cancel snooze", lambda: self._snooze(None))
         self._menu.addSeparator()
         self._menu.addAction("Quit", QApplication.quit)
         self.setContextMenu(self._menu)
@@ -90,6 +103,11 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
         QTimer.singleShot(3000, self._start_check)
 
     def _start_check(self) -> None:
+        if self._is_snoozed():
+            if self._snooze_until is not None:
+                self._action_status.setText(snooze_label(self._snooze_until))
+            self._update_tooltip()
+            return
         if self._check_thread is not None and self._check_thread.isRunning():
             return
         self.setIcon(self._icon_cache.checking())
@@ -103,33 +121,135 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
         self._results = results
         self._last_check = datetime.now()
         total = total_updates(results)
+        snoozed = self._is_snoozed()
+        notify = (
+            self._cfg.notifications.enabled
+            and not snoozed
+            and self._notification_engine.should_notify(results)
+        )
+        quiet = is_quiet_hours(
+            self._cfg.notifications.quiet_hours_start,
+            self._cfg.notifications.quiet_hours_end,
+        )
+
+        if quiet:
+            self._notification_engine.enter_quiet_hours()
+        else:
+            deferred = self._notification_engine.exit_quiet_hours()
+            if deferred and self._cfg.notifications.enabled and not snoozed:
+                self._send_deferred_notifications(deferred)
 
         if total > 0:
             self.setIcon(self._icon_cache.updates(total))
-            self.setToolTip(f"{APP_NAME} — {total} update(s) available")
-            self._action_status.setText(f"{total} update(s) available")
-            if total != self._prev_total:
+            self._update_status_action()
+            if (
+                not snoozed
+                and notify
+                and not self._notification_engine.maybe_defer(results)
+            ):
                 send_notification(results)
         else:
-            self.setIcon(self._icon_cache.uptodate())
-            self.setToolTip(f"{APP_NAME} — System is up to date")
-            self._action_status.setText("System is up to date")
+            if not results or any(result.error for result in results):
+                self.setIcon(self._icon_cache.idle())
+            else:
+                self.setIcon(self._icon_cache.uptodate())
+            self._update_status_action()
 
-        self._prev_total = total
+        self._update_tooltip()
+
+    def _update_tooltip(self) -> None:
+        lines = [APP_NAME]
+        if self._last_check:
+            lines.append(f"Last check: {self._last_check.strftime('%H:%M')}")
+        if self._is_snoozed() and self._snooze_until is not None:
+            lines.append(snooze_label(self._snooze_until))
+        total = total_updates(self._results)
+        if total > 0:
+            lines.append(f"{total} update(s) available")
+        elif any(result.error for result in self._results):
+            lines.append("Update check failed")
+        elif not self._results:
+            lines.append("No update checkers available")
+        else:
+            lines.append("System is up to date")
+        self.setToolTip("\n".join(lines))
+
+    def _send_deferred_notifications(self, deferred: list[DeferredNotification]) -> None:
+        latest_results = deferred[-1]["results"]
+        total = total_updates(latest_results)
+        if total == 0:
+            return
+        source_counts = {
+            result.source: len(result.updates)
+            for result in latest_results
+            if result.updates
+        }
+        body = "\n".join(f"  {source}: {count}" for source, count in source_counts.items())
+        send_notification(
+            latest_results,
+            summary="Updates available after quiet hours",
+            body=f"{total} update(s) currently available\n{body}",
+        )
+
+    def _update_status_action(self) -> None:
+        if self._is_snoozed() and self._snooze_until is not None:
+            self._action_status.setText(snooze_label(self._snooze_until))
+            return
+        total = total_updates(self._results)
+        if total > 0:
+            status = f"{total} update(s) available"
+        elif any(result.error for result in self._results):
+            status = "Update check failed"
+        elif not self._results:
+            status = "No update checkers available"
+        else:
+            status = "System is up to date"
+        if self._last_check:
+            status = f"{status} — Last check {self._last_check.strftime('%H:%M')}"
+        self._action_status.setText(status)
+
+    def _is_snoozed(self) -> bool:
+        if not is_snoozed(self._snooze_until):
+            self._snooze_until = None
+            return False
+        return True
+
+    def _snooze(self, hours: int | None) -> None:
+        if hours is None:
+            self._snooze_until = None
+            self._snooze_timer.stop()
+            self._notification_engine.reset_deduplication()
+        else:
+            self._snooze_until = datetime.now() + timedelta(hours=hours)
+            self._snooze_timer.start(hours * 60 * 60 * 1000)
+        self._update_status_action()
+        self._update_tooltip()
+        if hours is None:
+            self._start_check()
+
+    def _check_now(self) -> None:
+        if self._is_snoozed():
+            self._snooze_until = None
+            self._snooze_timer.stop()
+            self._notification_engine.reset_deduplication()
+        self._start_check()
+
+    def _on_snooze_expired(self) -> None:
+        self._snooze_until = None
+        self._notification_engine.reset_deduplication()
+        self._start_check()
 
     def _show_updates(self) -> None:
         if not self._results or total_updates(self._results) == 0:
-            subprocess.Popen(
-                [
-                    "notify-send",
-                    "-a",
-                    APP_NAME,
-                    "-i",
-                    _ICON_NAME,
-                    "No updates",
-                    "Your system is up to date.",
-                ]
-            )
+            if not self._results:
+                send_message("No update checkers", "No supported update source is available.")
+            elif any(result.error for result in self._results):
+                send_message(
+                    "Update check failed",
+                    "One or more update sources could not be checked.",
+                )
+            else:
+                send_message("No updates", "Your system is up to date.")
             return
         dlg = UpdatesDialog(self._results)
         dlg.set_on_run(self._run_topgrade)
@@ -140,7 +260,11 @@ class Tray(QSystemTrayIcon):  # type: ignore[misc]
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if total_updates(self._results) > 0:
+            if self._cfg.tray.click_action == "show_updates":
+                self._show_updates()
+            elif self._cfg.tray.click_action == "run_topgrade":
+                self._run_topgrade()
+            elif total_updates(self._results) > 0:
                 self._show_updates()
             else:
                 self._run_topgrade()
@@ -160,7 +284,11 @@ def run_tray() -> int:
         print("Error: No system tray available.", file=sys.stderr)
         return 1
 
-    cfg = load_config()
+    try:
+        cfg = load_config()
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"Error loading configuration: {exc}", file=sys.stderr)
+        return 2
     tray = Tray(cfg)
     tray.show()
     return int(app.exec())

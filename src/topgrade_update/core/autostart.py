@@ -1,19 +1,23 @@
 """XDG autostart management."""
 
+import os
 from pathlib import Path
 
-AUTOSTART_DIR = Path.home() / ".config" / "autostart"
+_CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+AUTOSTART_DIR = _CONFIG_HOME / "autostart"
 AUTOSTART_FILE = AUTOSTART_DIR / "topgrade-update-tray.desktop"
 
 _AUTOSTART_CONTENT = """\
 [Desktop Entry]
 Type=Application
-Name=Topgrade Update Tray
+Name=Topgrade Update
 Comment=System tray applet for topgrade update notifications
 Exec=topgrade-update --tray
 Icon=topgrade-update
 Terminal=false
 X-KDE-autostart-phase=2
+Categories=System;Utilities;
+Keywords=updates;pacman;aur;flatpak;topgrade;
 """
 
 
