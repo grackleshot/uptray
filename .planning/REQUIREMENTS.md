@@ -19,7 +19,7 @@
 - [x] **CONF-03**: Per-source enable/disable (pacman, AUR, flatpak)
 - [x] **CONF-04**: Configurable terminal emulator priority list
 - [x] **CONF-05**: Notification settings (enable/disable, quiet hours start/end)
-- [ ] **CONF-06**: Config loaded with precedence: CLI args > env vars > config file > defaults
+- [x] **CONF-06**: Config loaded with precedence: CLI args > env vars > config file > defaults
 
 ### Modular Update Checkers
 
@@ -37,7 +37,7 @@
 - [x] **NOTIFY-02**: Notification includes source breakdown (e.g., "5 packages, 2 AUR")
 - [x] **NOTIFY-03**: No re-notification for same update count on subsequent checks
 - [x] **NOTIFY-04**: Quiet hours respected (no notifications during configured window)
-- [ ] **NOTIFY-05**: Notification actions: "Run Topgrade", "Dismiss"
+- [x] **NOTIFY-05**: Notification actions: "Run Topgrade", "Snooze", and "Dismiss" when supported
 
 ### Tray Applet
 
@@ -68,7 +68,7 @@
 - [x] **QUAL-01**: Full type hints across codebase
 - [x] **QUAL-02**: `mypy --strict` passes
 - [x] **QUAL-03**: `ruff` for linting and formatting
-- [x] **QUAL-04**: Unit tests for core logic (config, checkers, engine) — 58 tests
+- [x] **QUAL-04**: Unit tests for core logic (config, checkers, engine) — 72 tests
 - [x] **QUAL-05**: `pytest-qt` tests for tray GUI components — requires PySide6 in test env
 
 ### Additional Checkers
@@ -115,7 +115,7 @@
 | CONF-03 | Phase 2 | Complete |
 | CONF-04 | Phase 2 | Complete |
 | CONF-05 | Phase 2 | Complete |
-| CONF-06 | Phase 2 | Pending |
+| CONF-06 | Phase 2 | Complete |
 | CHECK-01 | Phase 3 | Complete |
 | CHECK-02 | Phase 3 | Complete |
 | CHECK-03 | Phase 3 | Complete |
@@ -127,7 +127,7 @@
 | NOTIFY-02 | Phase 4 | Complete |
 | NOTIFY-03 | Phase 4 | Complete |
 | NOTIFY-04 | Phase 4 | Complete |
-| NOTIFY-05 | Phase 4 | Pending |
+| NOTIFY-05 | Phase 4 | Complete |
 | TRAY-01 | Phase 5 | Complete |
 | TRAY-02 | Phase 5 | Complete |
 | TRAY-03 | Phase 5 | Complete |
@@ -156,7 +156,7 @@
 - v1 requirements: 45 total
 - Mapped to phases: 45
 - Unmapped: 0 ✓
-- Complete: 43/45 (96%)
+- Complete: 45/45 (100%)
 
 ---
 *Requirements defined: 2026-05-19*

@@ -68,7 +68,12 @@ def test_partial_check_failure_is_visible_in_status_and_tooltip(
 ) -> None:
     """The tray reports source failures even when another source found updates."""
     tray = Tray(mock_cfg)
-    monkeypatch.setattr("topgrade_update.gui.tray.send_notification", lambda _results: None)
+    sent_notifications: list[dict[str, object]] = []
+
+    def capture_notification(_results: list[CheckResult], **kwargs: object) -> None:
+        sent_notifications.append(kwargs)
+
+    monkeypatch.setattr("topgrade_update.gui.tray.send_notification", capture_notification)
     results = [
         CheckResult(
             source="pacman",
@@ -83,3 +88,25 @@ def test_partial_check_failure_is_visible_in_status_and_tooltip(
         "1 update(s) available; 1 source(s) failed"
     )
     assert "1 source check(s) failed" in tray.toolTip()
+    assert [label for _, label in sent_notifications[0]["actions"]] == [
+        "Run Topgrade",
+        "Snooze",
+        "Dismiss",
+    ]
+
+
+def test_notification_actions_dispatch_to_tray_commands(
+    mock_cfg: Config,
+    qapp,  # noqa: ANN001
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tray = Tray(mock_cfg)
+    called: list[str] = []
+    monkeypatch.setattr(tray, "_run_topgrade", lambda: called.append("run"))
+    monkeypatch.setattr(tray, "_snooze", lambda hours: called.append(f"snooze:{hours}"))
+
+    tray._on_notification_action("run_topgrade")
+    tray._on_notification_action("snooze")
+    tray._on_notification_action("dismiss")
+
+    assert called == ["run", "snooze:1"]

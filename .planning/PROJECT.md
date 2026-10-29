@@ -22,7 +22,8 @@ Users never miss available system updates because the tray applet silently check
 - ✓ CLI: `--check`, `--list`, default run modes — existing
 - ✓ Modular package structure (`src/topgrade_update/`) — Phase 1
 - ✓ `pyproject.toml` with hatchling, entry points, `[gui]` extras — Phase 1
-- ✓ TOML config with XDG paths and validated values — Phase 1
+- ✓ TOML config with XDG paths, validation, and CLI > env > file > defaults precedence — Phase 1
+- ✓ DBus notification actions with plain notification fallback — Phase 3
 - ✓ Full type hints, mypy strict, ruff — Phase 1
 - ✓ Plugin ABC (`UpdateChecker`) with `name`, `is_available()`, `check()` — Phase 2
 - ✓ Hybrid plugin discovery (built-in auto + entry_points third-party) — Phase 2
@@ -51,7 +52,7 @@ Users never miss available system updates because the tray applet silently check
 ## Context
 
 Started as a single ~400-line Python monolith. Evolved into a modular Python package with:
-- 25 source files, 58 tests, full type checking
+- 25 source files, 72 tests, full type checking
 - Plugin architecture with 5 built-in checkers + entry point extensibility
 - System tray applet with badge, snooze, per-source breakdown
 - Rotating file logging with per-checker timing

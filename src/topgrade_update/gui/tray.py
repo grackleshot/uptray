@@ -16,7 +16,7 @@ from topgrade_update.core.config import load_config
 from topgrade_update.core.logging import get_logger
 from topgrade_update.core.models import CheckResult, Config
 from topgrade_update.core.notification_engine import DeferredNotification, NotificationEngine
-from topgrade_update.core.notifications import send_message, send_notification
+from topgrade_update.core.notifications import NotificationClient, send_message, send_notification
 from topgrade_update.core.quiet_hours import is_quiet_hours
 from topgrade_update.gui.dialog import UpdatesDialog
 from topgrade_update.gui.icons import IconCache
@@ -64,6 +64,8 @@ def launch_topgrade_in_terminal(cfg: Config | None = None) -> None:
 class Tray(QSystemTrayIcon):
     """System tray icon with periodic update checking."""
 
+    notification_action = Signal(str)
+
     def __init__(self, cfg: Config) -> None:
         super().__init__()
         self._cfg = cfg
@@ -71,6 +73,9 @@ class Tray(QSystemTrayIcon):
         self._last_check: datetime | None = None
         self._snooze_until: datetime | None = None
         self._notification_engine = NotificationEngine()
+        self._notification_client = NotificationClient()
+        self.notification_action.connect(self._on_notification_action)
+        self._notification_client.start_action_listener(self.notification_action.emit)
         self._icon_cache = IconCache()
         self._check_thread: CheckThread | None = None
         self._snooze_timer = QTimer()
@@ -157,7 +162,7 @@ class Tray(QSystemTrayIcon):
                 and notify
                 and not self._notification_engine.maybe_defer(results)
             ):
-                send_notification(results)
+                self._send_update_notification(results)
         else:
             if not results or any(result.error is not None for result in results):
                 self.setIcon(self._icon_cache.idle())
@@ -198,11 +203,39 @@ class Tray(QSystemTrayIcon):
             if result.updates
         }
         body = "\n".join(f"  {source}: {count}" for source, count in source_counts.items())
-        send_notification(
+        self._send_update_notification(
             latest_results,
             summary="Updates available after quiet hours",
             body=f"{total} update(s) currently available\n{body}",
         )
+
+    def _send_update_notification(
+        self,
+        results: list[CheckResult],
+        *,
+        summary: str | None = None,
+        body: str | None = None,
+    ) -> None:
+        """Send an update notification with actions when the desktop supports them."""
+        send_notification(
+            results,
+            actions=[
+                ("run_topgrade", "Run Topgrade"),
+                ("snooze", "Snooze"),
+                ("dismiss", "Dismiss"),
+            ],
+            summary=summary,
+            body=body,
+            on_action=self.notification_action.emit,
+            client=self._notification_client,
+        )
+
+    def _on_notification_action(self, action_id: str) -> None:
+        """Handle action buttons selected from a desktop notification."""
+        if action_id == "run_topgrade":
+            self._run_topgrade()
+        elif action_id == "snooze":
+            self._snooze(self._cfg.tray.snooze_hours)
 
     def _update_status_action(self) -> None:
         if self._is_snoozed() and self._snooze_until is not None:
@@ -274,6 +307,10 @@ class Tray(QSystemTrayIcon):
     def _run_topgrade(self) -> None:
         launch_topgrade_in_terminal(self._cfg)
 
+    def shutdown(self) -> None:
+        """Release the notification DBus connection and action listener."""
+        self._notification_client.shutdown()
+
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             if self._cfg.tray.click_action == "show_updates":
@@ -286,7 +323,7 @@ class Tray(QSystemTrayIcon):
                 self._run_topgrade()
 
 
-def run_tray() -> int:
+def run_tray(cfg: Config | None = None) -> int:
     """Launch the PySide6 system tray applet."""
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     signal.signal(signal.SIGTERM, signal.SIG_DFL)
@@ -300,11 +337,15 @@ def run_tray() -> int:
         print("Error: No system tray available.", file=sys.stderr)
         return 1
 
-    try:
-        cfg = load_config()
-    except (OSError, TypeError, ValueError) as exc:
-        print(f"Error loading configuration: {exc}", file=sys.stderr)
-        return 2
+    if cfg is None:
+        try:
+            cfg = load_config()
+        except (OSError, TypeError, ValueError) as exc:
+            print(f"Error loading configuration: {exc}", file=sys.stderr)
+            return 2
     tray = Tray(cfg)
-    tray.show()
-    return int(app.exec())
+    try:
+        tray.show()
+        return int(app.exec())
+    finally:
+        tray.shutdown()

@@ -12,11 +12,84 @@ from topgrade_update.core.autostart import disable_autostart, enable_autostart
 from topgrade_update.core.checkers import check_all, total_updates
 from topgrade_update.core.config import load_config
 from topgrade_update.core.logging import setup_logging
-from topgrade_update.core.models import CheckResult, Config
+from topgrade_update.core.models import CheckResult, Config, SourceConfig
 from topgrade_update.core.notifications import send_notification
 from topgrade_update.core.quiet_hours import is_quiet_hours
 
 APP_NAME = "Topgrade Update"
+
+
+def _parse_bounded_int(value: str, *, minimum: int, maximum: int, label: str) -> int:
+    """Parse an integer CLI value and enforce its supported range."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"{label} must be an integer") from exc
+    if not minimum <= parsed <= maximum:
+        raise argparse.ArgumentTypeError(f"{label} must be from {minimum} to {maximum}")
+    return parsed
+
+
+def _parse_source_name(value: str) -> str:
+    """Normalize a checker name passed to a source enable/disable option."""
+    source = value.strip().lower()
+    if not source:
+        raise argparse.ArgumentTypeError("source name cannot be empty")
+    return source
+
+
+def _parse_terminal(value: str) -> str:
+    """Normalize and validate a terminal command passed on the CLI."""
+    terminal = value.strip()
+    if not terminal:
+        raise argparse.ArgumentTypeError("terminal command cannot be empty")
+    return terminal
+
+
+def _apply_cli_overrides(
+    cfg: Config,
+    args: argparse.Namespace,
+    parser: argparse.ArgumentParser,
+) -> None:
+    """Apply explicit CLI values over environment and file configuration."""
+    if args.check_interval is not None:
+        cfg.check_interval = args.check_interval
+    if args.terminals is not None:
+        cfg.terminals = args.terminals
+
+    enabled_sources = set(args.enable_source or [])
+    disabled_sources = set(args.disable_source or [])
+    conflicts = enabled_sources & disabled_sources
+    if conflicts:
+        parser.error(f"cannot both enable and disable source(s): {', '.join(sorted(conflicts))}")
+    for source in enabled_sources:
+        cfg.sources.setdefault(source, SourceConfig()).enabled = True
+    for source in disabled_sources:
+        cfg.sources.setdefault(source, SourceConfig()).enabled = False
+    for command in cfg.custom_commands:
+        source = f"custom_{command.name.lower().replace(' ', '_')}"
+        if source in enabled_sources:
+            command.enabled = True
+        elif source in disabled_sources:
+            command.enabled = False
+
+    if args.notifications_enabled is not None:
+        cfg.notifications.enabled = args.notifications_enabled
+    if args.no_quiet_hours:
+        if args.quiet_hours_start is not None or args.quiet_hours_end is not None:
+            parser.error("--no-quiet-hours cannot be combined with quiet-hour values")
+        cfg.notifications.quiet_hours_start = None
+        cfg.notifications.quiet_hours_end = None
+    else:
+        if args.quiet_hours_start is not None:
+            cfg.notifications.quiet_hours_start = args.quiet_hours_start
+        if args.quiet_hours_end is not None:
+            cfg.notifications.quiet_hours_end = args.quiet_hours_end
+
+    if args.tray_click_action is not None:
+        cfg.tray.click_action = args.tray_click_action
+    if args.snooze_hours is not None:
+        cfg.tray.snooze_hours = args.snooze_hours
 
 
 def _report_checker_errors(results: list[CheckResult]) -> bool:
@@ -134,7 +207,7 @@ def cmd_run() -> int:
     return 1  # unreachable
 
 
-def cmd_tray() -> int:
+def cmd_tray(cfg: Config | None = None) -> int:
     """Launch the system tray applet."""
     try:
         from topgrade_update.gui.tray import run_tray
@@ -145,7 +218,7 @@ def cmd_tray() -> int:
             file=sys.stderr,
         )
         return 1
-    return run_tray()
+    return run_tray(cfg)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -183,6 +256,61 @@ def main(argv: list[str] | None = None) -> int:
         dest="json_output",
         help="With --list: output results as JSON",
     )
+    parser.add_argument(
+        "--check-interval",
+        type=lambda value: _parse_bounded_int(
+            value, minimum=300, maximum=86400, label="check interval"
+        ),
+        help="Override the check interval in seconds (300–86400)",
+    )
+    parser.add_argument(
+        "--terminal",
+        dest="terminals",
+        action="append",
+        type=_parse_terminal,
+        help="Override terminal priority (repeat for additional terminals)",
+    )
+    parser.add_argument(
+        "--enable-source", action="append", type=_parse_source_name,
+        help="Enable a checker source (repeatable)",
+    )
+    parser.add_argument(
+        "--disable-source", action="append", type=_parse_source_name,
+        help="Disable a checker source (repeatable)",
+    )
+    notifications_group = parser.add_mutually_exclusive_group()
+    notifications_group.add_argument(
+        "--enable-notifications", dest="notifications_enabled", action="store_true",
+        help="Enable desktop notifications",
+    )
+    notifications_group.add_argument(
+        "--disable-notifications", dest="notifications_enabled", action="store_false",
+        help="Disable desktop notifications",
+    )
+    parser.set_defaults(notifications_enabled=None)
+    parser.add_argument(
+        "--quiet-hours-start",
+        type=lambda value: _parse_bounded_int(value, minimum=0, maximum=23, label="hour"),
+        help="Override quiet-hours start hour (0–23)",
+    )
+    parser.add_argument(
+        "--quiet-hours-end",
+        type=lambda value: _parse_bounded_int(value, minimum=0, maximum=23, label="hour"),
+        help="Override quiet-hours end hour (0–23)",
+    )
+    parser.add_argument(
+        "--no-quiet-hours", action="store_true",
+        help="Disable quiet hours",
+    )
+    parser.add_argument(
+        "--tray-click-action", choices=("default", "show_updates", "run_topgrade"),
+        help="Override tray click behavior",
+    )
+    parser.add_argument(
+        "--snooze-hours",
+        type=lambda value: _parse_bounded_int(value, minimum=1, maximum=24, label="snooze hours"),
+        help="Override the configured tray snooze duration (1–24 hours)",
+    )
     args = parser.parse_args(argv)
 
     if sum((args.check, args.list, args.tray)) > 1:
@@ -194,24 +322,44 @@ def main(argv: list[str] | None = None) -> int:
     if args.json_output and not args.list:
         parser.error("--json requires --list")
 
+    has_overrides = any(
+        (
+            args.check_interval is not None,
+            args.terminals is not None,
+            args.enable_source,
+            args.disable_source,
+            args.notifications_enabled is not None,
+            args.quiet_hours_start is not None,
+            args.quiet_hours_end is not None,
+            args.no_quiet_hours,
+            args.tray_click_action is not None,
+            args.snooze_hours is not None,
+        )
+    )
+    if has_overrides and not (args.check or args.list or args.tray):
+        parser.error("configuration overrides require --check, --list, or --tray")
+    if has_overrides and (args.enable or args.disable):
+        parser.error("configuration overrides cannot be used with --enable or --disable")
+
     # Configure logging early
     setup_logging(verbose=args.verbose)
 
-    if args.tray:
-        if args.enable:
-            enable_autostart()
-            return 0
-        if args.disable:
-            disable_autostart()
-            return 0
-        return cmd_tray()
+    if args.tray and args.enable:
+        enable_autostart()
+        return 0
+    if args.tray and args.disable:
+        disable_autostart()
+        return 0
 
-    if args.check or args.list:
+    if args.check or args.list or args.tray:
         try:
             cfg = load_config()
         except (OSError, TypeError, ValueError) as exc:
             print(f"Error loading configuration: {exc}", file=sys.stderr)
             return 2
+        _apply_cli_overrides(cfg, args, parser)
+        if args.tray:
+            return cmd_tray(cfg)
         if args.check:
             return cmd_check(cfg, verbose=args.verbose)
         return cmd_list(cfg, json_output=args.json_output)

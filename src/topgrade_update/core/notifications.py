@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import contextlib
 import subprocess
+from collections.abc import Callable
+from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
+
+from topgrade_update.core.logging import get_logger
 
 if TYPE_CHECKING:
     from topgrade_update.core.models import CheckResult
@@ -20,13 +24,24 @@ class NotificationClient:
         self._dbus_available = False
         self._bus: Any | None = None
         self._proxy: Any | None = None
+        self._MatchRule: Any | None = None
+        self._message_bus: Any | None = None
+        self._action_handler: Callable[[str], None] | None = None
+        self._action_lock = Lock()
+        self._action_ready = Event()
+        self._action_stop = Event()
+        self._action_listener_thread: Thread | None = None
+        self._action_listener_available = False
         try:
-            from jeepney import DBusAddress, new_method_call
+            from jeepney import DBusAddress, MatchRule, new_method_call
+            from jeepney.bus_messages import message_bus
             from jeepney.io.blocking import open_dbus_connection
 
             self._open_dbus_connection = open_dbus_connection
             self._DBusAddress = DBusAddress
             self._new_method_call = new_method_call
+            self._MatchRule = MatchRule
+            self._message_bus = message_bus
             self._dbus_available = True
         except ImportError:
             pass
@@ -39,9 +54,9 @@ class NotificationClient:
         try:
             self._bus = self._open_dbus_connection()
             self._proxy = self._DBusAddress(
-                "org.freedesktop.Notifications",
                 "/org/freedesktop/Notifications",
-                "org.freedesktop.Notifications",
+                bus_name="org.freedesktop.Notifications",
+                interface="org.freedesktop.Notifications",
             )
             return True
         except Exception:
@@ -49,11 +64,90 @@ class NotificationClient:
             self._proxy = None
             return False
 
+    def start_action_listener(self, handler: Callable[[str], None]) -> bool:
+        """Start listening for notification action signals in a daemon thread."""
+        if not self._dbus_available:
+            return False
+        with self._action_lock:
+            self._action_handler = handler
+        thread = self._action_listener_thread
+        if thread is not None and thread.is_alive():
+            return True
+        self._action_stop.clear()
+        self._action_ready.clear()
+        self._action_listener_available = False
+        self._action_listener_thread = Thread(
+            target=self._listen_for_actions,
+            name="topgrade-notification-actions",
+            daemon=True,
+        )
+        self._action_listener_thread.start()
+        return True
+
+    def _listen_for_actions(self) -> None:
+        """Subscribe to ActionInvoked signals and dispatch their action IDs."""
+        bus: Any | None = None
+        try:
+            if self._MatchRule is None or self._message_bus is None:
+                return
+            bus = self._open_dbus_connection()
+            rule = self._MatchRule(
+                type="signal",
+                sender="org.freedesktop.Notifications",
+                interface="org.freedesktop.Notifications",
+                member="ActionInvoked",
+                path="/org/freedesktop/Notifications",
+            )
+            bus.send_and_get_reply(self._message_bus.AddMatch(rule), timeout=3)
+            with bus.filter(rule) as matches:
+                self._action_listener_available = True
+                self._action_ready.set()
+                while not self._action_stop.is_set():
+                    try:
+                        message = bus.recv_until_filtered(matches, timeout=0.25)
+                    except TimeoutError:
+                        continue
+                    if len(message.body) >= 2:
+                        self._dispatch_action(str(message.body[1]))
+        except Exception as exc:
+            get_logger("notifications").warning("Notification actions unavailable: %s", exc)
+            self._action_listener_available = False
+        finally:
+            self._action_ready.set()
+            if bus is not None:
+                with contextlib.suppress(Exception):
+                    bus.close()
+
+    def _dispatch_action(self, action_id: str) -> None:
+        """Call the current action handler without letting it kill the listener."""
+        with self._action_lock:
+            handler = self._action_handler
+        if handler is None:
+            return
+        try:
+            handler(action_id)
+        except Exception:
+            get_logger("notifications").exception("Notification action handler failed")
+
+    def _supports_actions(self) -> bool:
+        """Ask the notification service whether it supports action buttons."""
+        if self._bus is None or self._proxy is None:
+            return False
+        try:
+            message = self._new_method_call(self._proxy, "GetCapabilities")
+            reply = self._bus.send_and_get_reply(message, timeout=5)
+            capabilities = reply.body[0] if reply.body else []
+            return isinstance(capabilities, list) and "actions" in capabilities
+        except Exception:
+            return False
+
     def notify(
         self,
         summary: str,
         body: str,
         actions: list[tuple[str, str]] | None = None,
+        *,
+        on_action: Callable[[str], None] | None = None,
     ) -> int | None:
         """Show a notification. Returns notification ID or None.
 
@@ -61,11 +155,23 @@ class NotificationClient:
             summary: Notification title.
             body: Notification body text.
             actions: List of (action_id, label) tuples for action buttons.
+            on_action: Called with the action ID when the user selects a button.
 
         Returns:
             Notification ID from DBus, or None if fallback was used.
         """
         if self._ensure_connection():
+            if actions:
+                if on_action is None:
+                    actions = None
+                else:
+                    self.start_action_listener(on_action)
+                    if not self._action_ready.wait(timeout=1.0):
+                        self._notify_send(summary, body)
+                        return None
+                    if not self._action_listener_available or not self._supports_actions():
+                        self._notify_send(summary, body)
+                        return None
             return self._notify_dbus(summary, body, actions)
         self._notify_send(summary, body)
         return None
@@ -98,7 +204,7 @@ class NotificationClient:
             ),
         )
         try:
-            reply = self._bus.send_and_get_reply(msg)
+            reply = self._bus.send_and_get_reply(msg, timeout=5)
             reply_body = getattr(reply, "body", ())
             return reply_body[0] if reply_body else None
         except Exception:
@@ -132,9 +238,22 @@ class NotificationClient:
                 "u",
                 (notification_id,),
             )
-            bus.send_and_get_reply(msg)
+            bus.send_and_get_reply(msg, timeout=5)
         except Exception:
             pass
+
+    def shutdown(self) -> None:
+        """Stop the signal listener and close the notification bus connection."""
+        self._action_stop.set()
+        listener = self._action_listener_thread
+        if listener is not None and listener.is_alive():
+            listener.join(timeout=1)
+        bus = self._bus
+        self._bus = None
+        self._proxy = None
+        if bus is not None:
+            with contextlib.suppress(Exception):
+                bus.close()
 
 
 def _format_body(results: list[CheckResult]) -> str:
@@ -151,6 +270,9 @@ def send_notification(
     actions: list[tuple[str, str]] | None = None,
     summary: str | None = None,
     body: str | None = None,
+    *,
+    on_action: Callable[[str], None] | None = None,
+    client: NotificationClient | None = None,
 ) -> int | None:
     """Send a desktop notification summarising available updates.
 
@@ -159,6 +281,8 @@ def send_notification(
         actions: Optional action buttons for DBus notifications.
         summary: Optional notification title override.
         body: Optional notification body override.
+        on_action: Callback for a selected action button.
+        client: Reusable client, usually owned by the tray applet.
 
     Returns:
         Notification ID if DBus was used, None otherwise.
@@ -170,8 +294,13 @@ def send_notification(
     notification_summary = summary or f"{total} update(s) available"
     notification_body = body or _format_body(results)
 
-    client = NotificationClient()
-    return client.notify(notification_summary, notification_body, actions)
+    notification_client = client or NotificationClient()
+    return notification_client.notify(
+        notification_summary,
+        notification_body,
+        actions,
+        on_action=on_action,
+    )
 
 
 def send_message(summary: str, body: str) -> int | None:

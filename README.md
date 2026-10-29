@@ -11,7 +11,7 @@
 
 - **System tray applet** with periodic update checking and a badge counter
 - **Multi-source checking**: pacman, AUR (paru/yay), Flatpak version and branch, firmware, reboot state
-- **Smart notifications**: deduplication, quiet hours, snooze
+- **Smart notifications**: deduplication, quiet hours, snooze, and desktop action buttons
 - **Topgrade integration**: respects your `topgrade.toml`, launches in your preferred terminal
 - **Plugin architecture**: add custom checkers via entry points
 - **Configurable**: TOML config at `~/.config/topgrade-update/config.toml`
@@ -97,6 +97,23 @@ quiet_hours_end = 7     # 7 AM
 click_action = "default"  # "default", "show_updates", "run_topgrade"
 snooze_hours = 4
 ```
+
+Configuration precedence is **CLI arguments → environment variables → TOML file → defaults**.
+Overrides apply to `--check`, `--list`, and `--tray`:
+
+| Setting | Environment variable | CLI override |
+| --- | --- | --- |
+| Check interval | `TOPGRADE_UPDATE_CHECK_INTERVAL` | `--check-interval SECONDS` |
+| Terminal priority | `TOPGRADE_UPDATE_TERMINALS` (colon-separated) | Repeat `--terminal COMMAND` |
+| Checker enablement | `TOPGRADE_UPDATE_SOURCE_<NAME>_ENABLED` | `--enable-source NAME` / `--disable-source NAME` |
+| Notifications | `TOPGRADE_UPDATE_NOTIFICATIONS_ENABLED` | `--enable-notifications` / `--disable-notifications` |
+| Quiet hours | `TOPGRADE_UPDATE_QUIET_HOURS_START`, `TOPGRADE_UPDATE_QUIET_HOURS_END` | `--quiet-hours-start HOUR`, `--quiet-hours-end HOUR`, or `--no-quiet-hours` |
+| Tray click action | `TOPGRADE_UPDATE_TRAY_CLICK_ACTION` | `--tray-click-action ACTION` |
+| Snooze duration | `TOPGRADE_UPDATE_TRAY_SNOOZE_HOURS` | `--snooze-hours HOURS` |
+
+Boolean environment values accept `true`/`false`, `yes`/`no`, `on`/`off`, or `1`/`0`.
+For checker names, use uppercase letters and preserve underscores; for example,
+`TOPGRADE_UPDATE_SOURCE_CUSTOM_MY_CHECK_ENABLED` controls the `custom_my_check` checker.
 
 ### Plugin architecture
 

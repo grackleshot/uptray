@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -76,6 +77,95 @@ def _merge_tray_config(raw: dict[str, Any]) -> TrayConfig:
     )
 
 
+def _parse_bool(value: str, variable: str) -> bool:
+    """Parse a conventional environment boolean value."""
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{variable} must be true or false")
+
+
+def _parse_env_int(value: str, variable: str) -> int:
+    """Parse an integer override with an actionable error message."""
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{variable} must be an integer") from exc
+
+
+def _apply_environment_overrides(cfg: Config, environ: Mapping[str, str]) -> Config:
+    """Apply supported TOPGRADE_UPDATE_* values over file and default settings."""
+    prefix = "TOPGRADE_UPDATE_"
+    if f"{prefix}CHECK_INTERVAL" in environ:
+        interval = _parse_env_int(environ[f"{prefix}CHECK_INTERVAL"], f"{prefix}CHECK_INTERVAL")
+        if not 300 <= interval <= 86400:
+            raise ValueError(f"{prefix}CHECK_INTERVAL must be from 300 to 86400 seconds")
+        cfg.check_interval = interval
+
+    terminals_key = f"{prefix}TERMINALS"
+    if terminals_key in environ:
+        raw_terminals = environ[terminals_key]
+        cfg.terminals = raw_terminals.split(os.pathsep) if raw_terminals else []
+        if not all(cfg.terminals):
+            raise ValueError(f"{terminals_key} must contain non-empty command names")
+
+    source_prefix = f"{prefix}SOURCE_"
+    source_overrides: dict[str, bool] = {}
+    for key, value in environ.items():
+        if not key.startswith(source_prefix):
+            continue
+        if not key.endswith("_ENABLED"):
+            raise ValueError(f"{key} must end in _ENABLED")
+        raw_name = key[len(source_prefix):-len("_ENABLED")]
+        if not raw_name or raw_name != raw_name.upper():
+            raise ValueError(f"{key} must contain an uppercase source name")
+        source = raw_name.lower()
+        enabled = _parse_bool(value, key)
+        source_overrides[source] = enabled
+        cfg.sources.setdefault(source, SourceConfig()).enabled = enabled
+
+    for command in cfg.custom_commands:
+        source = f"custom_{command.name.lower().replace(' ', '_')}"
+        if source in source_overrides:
+            command.enabled = source_overrides[source]
+
+    notifications = {
+        "enabled": cfg.notifications.enabled,
+        "quiet_hours_start": cfg.notifications.quiet_hours_start,
+        "quiet_hours_end": cfg.notifications.quiet_hours_end,
+    }
+    notification_env = {
+        "enabled": f"{prefix}NOTIFICATIONS_ENABLED",
+        "quiet_hours_start": f"{prefix}QUIET_HOURS_START",
+        "quiet_hours_end": f"{prefix}QUIET_HOURS_END",
+    }
+    for field_name, variable in notification_env.items():
+        if variable not in environ:
+            continue
+        value = environ[variable]
+        notifications[field_name] = (
+            _parse_bool(value, variable)
+            if field_name == "enabled"
+            else _parse_env_int(value, variable)
+        )
+    cfg.notifications = _merge_notification_config(notifications)
+
+    tray = {
+        "click_action": cfg.tray.click_action,
+        "snooze_hours": cfg.tray.snooze_hours,
+    }
+    click_action_key = f"{prefix}TRAY_CLICK_ACTION"
+    snooze_hours_key = f"{prefix}TRAY_SNOOZE_HOURS"
+    if click_action_key in environ:
+        tray["click_action"] = environ[click_action_key]
+    if snooze_hours_key in environ:
+        tray["snooze_hours"] = _parse_env_int(environ[snooze_hours_key], snooze_hours_key)
+    cfg.tray = _merge_tray_config(tray)
+    return cfg
+
+
 def _merge_custom_command(raw: dict[str, Any]) -> CustomCommandConfig:
     """Build a validated custom-command config from a raw TOML table."""
     name = raw.get("name")
@@ -93,11 +183,16 @@ def _merge_custom_command(raw: dict[str, Any]) -> CustomCommandConfig:
     return CustomCommandConfig(name=name, command=command, enabled=enabled)
 
 
-def load_config(path: Path | None = None) -> Config:
+def load_config(
+    path: Path | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Config:
     """Load configuration from TOML file, falling back to defaults.
 
     Args:
         path: Explicit config file path. If None, uses the default XDG location.
+        environ: Environment mapping used for overrides. Defaults to ``os.environ``.
 
     Returns:
         A Config instance merged from defaults and the file.
@@ -107,16 +202,15 @@ def load_config(path: Path | None = None) -> Config:
 
     cfg = Config()
 
-    if not path.exists():
-        return cfg
+    raw: dict[str, Any] = {}
+    if path.exists():
+        try:
+            import tomllib  # type: ignore[import-not-found]
+        except ImportError:
+            import tomli as tomllib  # type: ignore[import-not-found,unused-ignore]
 
-    try:
-        import tomllib  # type: ignore[import-not-found]
-    except ImportError:
-        import tomli as tomllib  # type: ignore[import-not-found,unused-ignore]
-
-    with path.open("rb") as f:
-        raw: dict[str, Any] = tomllib.load(f)
+        with path.open("rb") as f:
+            raw = tomllib.load(f)
 
     if "check_interval" in raw:
         interval = raw["check_interval"]
@@ -169,7 +263,7 @@ def load_config(path: Path | None = None) -> Config:
             raise ValueError("tray must be a TOML table")
         cfg.tray = _merge_tray_config(raw["tray"])
 
-    return cfg
+    return _apply_environment_overrides(cfg, os.environ if environ is None else environ)
 
 
 def save_config(cfg: Config, path: Path | None = None) -> None:
