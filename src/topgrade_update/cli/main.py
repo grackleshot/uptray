@@ -12,7 +12,7 @@ from topgrade_update.core.autostart import disable_autostart, enable_autostart
 from topgrade_update.core.checkers import check_all, total_updates
 from topgrade_update.core.config import load_config
 from topgrade_update.core.logging import setup_logging
-from topgrade_update.core.models import CheckResult, Config, SourceConfig
+from topgrade_update.core.models import CheckResult, Config, SourceConfig, custom_checker_name
 from topgrade_update.core.notifications import send_notification
 from topgrade_update.core.quiet_hours import is_quiet_hours
 
@@ -67,7 +67,7 @@ def _apply_cli_overrides(
     for source in disabled_sources:
         cfg.sources.setdefault(source, SourceConfig()).enabled = False
     for command in cfg.custom_commands:
-        source = f"custom_{command.name.lower().replace(' ', '_')}"
+        source = custom_checker_name(command.name)
         if source in enabled_sources:
             command.enabled = True
         elif source in disabled_sources:

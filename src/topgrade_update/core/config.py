@@ -14,6 +14,7 @@ from topgrade_update.core.models import (
     NotificationConfig,
     SourceConfig,
     TrayConfig,
+    custom_checker_name,
 )
 
 
@@ -127,7 +128,7 @@ def _apply_environment_overrides(cfg: Config, environ: Mapping[str, str]) -> Con
         cfg.sources.setdefault(source, SourceConfig()).enabled = enabled
 
     for command in cfg.custom_commands:
-        source = f"custom_{command.name.lower().replace(' ', '_')}"
+        source = custom_checker_name(command.name)
         if source in source_overrides:
             command.enabled = source_overrides[source]
 
@@ -245,7 +246,7 @@ def load_config(
                 ]
                 if len(cfg.custom_commands) != len(src_raw):
                     raise ValueError("each sources.custom_commands entry must be a table")
-                names = [command.name.lower().replace(" ", "_") for command in cfg.custom_commands]
+                names = [custom_checker_name(command.name) for command in cfg.custom_commands]
                 if len(names) != len(set(names)):
                     raise ValueError("custom command names must be unique")
                 continue

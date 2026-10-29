@@ -7,7 +7,7 @@ import re
 import shutil
 from typing import ClassVar
 
-from topgrade_update.core.models import Update
+from topgrade_update.core.models import Update, custom_checker_name
 from topgrade_update.core.provider import UpdateChecker
 from topgrade_update.core.subprocess import run_checked
 
@@ -246,7 +246,7 @@ class CustomCommandChecker(UpdateChecker):
     @property
     def name(self) -> str:  # type: ignore[override]
         """Return a unique name for this checker instance."""
-        return f"custom_{self._display_name.lower().replace(' ', '_')}"
+        return custom_checker_name(self._display_name)
 
     def is_available(self) -> bool:
         if not self._command:

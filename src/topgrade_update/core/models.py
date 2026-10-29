@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+def custom_checker_name(display_name: str) -> str:
+    """Return the stable checker ID used for a custom command display name."""
+    return f"custom_{display_name.lower().replace(' ', '_')}"
+
+
 @dataclass(frozen=True)
 class Update:
     """A single available update."""
