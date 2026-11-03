@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
-from topgrade_update.gui.tray import launch_topgrade_in_terminal
+import pytest
+
+pytest.importorskip("PySide6")
+
+from topgrade_update.gui.tray import launch_topgrade_in_terminal  # noqa: E402
 
 
 def test_launch_topgrade_reports_when_topgrade_is_missing(monkeypatch) -> None:

@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QTextEdit
+import pytest
 
-from topgrade_update.core.models import CheckResult, Update
-from topgrade_update.gui.dialog import UpdatesDialog
+pytest.importorskip("PySide6")
+
+from PySide6.QtWidgets import QTextEdit  # noqa: E402
+
+from topgrade_update.core.models import CheckResult, Update  # noqa: E402
+from topgrade_update.gui.dialog import UpdatesDialog  # noqa: E402
 
 
 def test_dialog_shows_partial_checker_failures(qapp) -> None:  # noqa: ANN001

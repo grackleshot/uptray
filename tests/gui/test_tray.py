@@ -7,7 +7,10 @@ from datetime import datetime, timedelta
 import pytest
 
 from topgrade_update.core.models import CheckResult, Config, NotificationConfig, TrayConfig, Update
-from topgrade_update.gui.tray import APP_NAME, Tray
+
+pytest.importorskip("PySide6")
+
+from topgrade_update.gui.tray import APP_NAME, Tray  # noqa: E402
 
 
 @pytest.fixture
