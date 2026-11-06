@@ -18,7 +18,9 @@ def test_enable_creates_desktop_file(tmp_path, monkeypatch, capsys) -> None:
     assert file.exists()
     content = file.read_text()
     assert content.startswith("[Desktop Entry]")
-    assert "Exec=topgrade-update --tray" in content
+    # The Exec line uses an absolute path so systemd-xdg-autostart-generator
+    # resolves it even when ~/.local/bin is not in the user manager's PATH.
+    assert f"Exec={autostart._EXEC_PATH} --tray" in content
     assert "Autostart enabled" in capsys.readouterr().out
 
 
