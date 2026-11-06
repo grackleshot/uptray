@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
 from topgrade_update.core.logging import get_logger
@@ -11,6 +12,8 @@ from topgrade_update.core.logging import get_logger
 if TYPE_CHECKING:
     from topgrade_update.core.models import CheckResult, Config
     from topgrade_update.core.provider import UpdateChecker
+
+_MAX_PARALLEL_CHECKERS = 8
 
 
 class UpdateEngine:
@@ -104,13 +107,7 @@ class UpdateEngine:
         available_checkers = list(self.available())
         log.info("Starting update check with %d available checkers", len(available_checkers))
 
-        for checker in available_checkers:
-            if topgrade_disabled and checker.name in topgrade_disabled:
-                continue
-            src_cfg = cfg.sources.get(checker.name, SourceConfig())
-            if not src_cfg.enabled:
-                continue
-
+        def _run_one(checker: UpdateChecker) -> CheckResult:
             start = time.monotonic()
             try:
                 updates = checker.check()
@@ -137,6 +134,24 @@ class UpdateEngine:
                     result.duration_ms,
                     exc,
                 )
-            results.append(result)
+            return result
+
+        targets: list[UpdateChecker] = []
+        for checker in available_checkers:
+            if topgrade_disabled and checker.name in topgrade_disabled:
+                continue
+            src_cfg = cfg.sources.get(checker.name, SourceConfig())
+            if not src_cfg.enabled:
+                continue
+            targets.append(checker)
+
+        if not targets:
+            return results
+
+        # Checkers are independent subprocess wrappers, so they run
+        # concurrently; pool.map preserves the deterministic result order.
+        workers = min(_MAX_PARALLEL_CHECKERS, len(targets))
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results.extend(pool.map(_run_one, targets))
 
         return results

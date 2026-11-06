@@ -64,20 +64,25 @@ class PacmanChecker(UpdateChecker):
 
 
 class AurChecker(UpdateChecker):
-    """Check for available AUR updates via paru or yay."""
+    """Check for available AUR updates via paru, yay, or pikaur."""
 
     name: ClassVar[str] = "aur"
     label: ClassVar[str] = "AUR"
+    helpers: ClassVar[tuple[str, ...]] = ("paru", "yay", "pikaur")
 
     def is_available(self) -> bool:
-        return shutil.which("paru") is not None or shutil.which("yay") is not None
+        return any(shutil.which(helper) is not None for helper in self.helpers)
 
     def check(self) -> list[Update]:
-        for helper in ("paru", "yay"):
+        for helper in self.helpers:
             if not shutil.which(helper):
                 continue
             command = [helper, "-Qua"]
             r = run_checked(command)
+            if r.returncode == 1 and not r.stdout.strip():
+                # paru/yay/pikaur follow pacman -Qu semantics: exit 1 with no
+                # output means "no updates", not an error.
+                return []
             if r.returncode != 0:
                 raise _command_error(command, r.returncode, r.stderr)
             if not r.stdout.strip():

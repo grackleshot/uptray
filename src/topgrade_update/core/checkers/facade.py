@@ -12,8 +12,10 @@ from topgrade_update.core.topgrade_config import (
     find_topgrade_toml,
     get_disabled_categories,
     get_disabled_steps,
+    get_only_steps,
     load_topgrade_config,
     map_disabled_checkers,
+    only_restricted_checkers,
 )
 
 if TYPE_CHECKING:
@@ -42,7 +44,14 @@ def _get_topgrade_disabled_checkers() -> set[str]:
     disabled_topgrade_names = get_disabled_steps(topgrade_cfg) | get_disabled_categories(
         topgrade_cfg
     )
-    return map_disabled_checkers(disabled_topgrade_names)
+    disabled = map_disabled_checkers(disabled_topgrade_names)
+
+    # When topgrade is restricted to specific steps (misc.only), every other
+    # step-backed checker is skipped too.
+    only_steps = get_only_steps(topgrade_cfg)
+    if only_steps is not None:
+        disabled |= only_restricted_checkers(only_steps)
+    return disabled
 
 
 def check_all(cfg: Config | None = None) -> list[CheckResult]:

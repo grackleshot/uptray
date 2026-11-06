@@ -49,10 +49,14 @@ def _merge_notification_config(raw: dict[str, Any]) -> NotificationConfig:
         ):
             raise ValueError(f"notifications.{key} must be an integer from 0 to 23")
         quiet_hours[key] = hour
+    sound = raw.get("sound", False)
+    if not isinstance(sound, bool):
+        raise ValueError("notifications.sound must be true or false")
     return NotificationConfig(
         enabled=enabled,
         quiet_hours_start=quiet_hours["quiet_hours_start"],
         quiet_hours_end=quiet_hours["quiet_hours_end"],
+        sound=sound,
     )
 
 
@@ -72,9 +76,13 @@ def _merge_tray_config(raw: dict[str, Any]) -> TrayConfig:
         or not 1 <= snooze_hours <= 24
     ):
         raise ValueError("tray.snooze_hours must be an integer from 1 to 24")
+    icon_style = raw.get("icon_style", "default")
+    if not isinstance(icon_style, str) or icon_style not in {"default", "colorblind"}:
+        raise ValueError("tray.icon_style must be default or colorblind")
     return TrayConfig(
         click_action=click_action,
         snooze_hours=snooze_hours,
+        icon_style=icon_style,
     )
 
 
@@ -136,33 +144,39 @@ def _apply_environment_overrides(cfg: Config, environ: Mapping[str, str]) -> Con
         "enabled": cfg.notifications.enabled,
         "quiet_hours_start": cfg.notifications.quiet_hours_start,
         "quiet_hours_end": cfg.notifications.quiet_hours_end,
+        "sound": cfg.notifications.sound,
     }
     notification_env = {
         "enabled": f"{prefix}NOTIFICATIONS_ENABLED",
         "quiet_hours_start": f"{prefix}QUIET_HOURS_START",
         "quiet_hours_end": f"{prefix}QUIET_HOURS_END",
+        "sound": f"{prefix}NOTIFICATIONS_SOUND",
     }
     for field_name, variable in notification_env.items():
         if variable not in environ:
             continue
         value = environ[variable]
         notifications[field_name] = (
-            _parse_bool(value, variable)
-            if field_name == "enabled"
-            else _parse_env_int(value, variable)
+            _parse_env_int(value, variable)
+            if field_name.startswith("quiet_hours")
+            else _parse_bool(value, variable)
         )
     cfg.notifications = _merge_notification_config(notifications)
 
     tray = {
         "click_action": cfg.tray.click_action,
         "snooze_hours": cfg.tray.snooze_hours,
+        "icon_style": cfg.tray.icon_style,
     }
     click_action_key = f"{prefix}TRAY_CLICK_ACTION"
     snooze_hours_key = f"{prefix}TRAY_SNOOZE_HOURS"
+    icon_style_key = f"{prefix}TRAY_ICON_STYLE"
     if click_action_key in environ:
         tray["click_action"] = environ[click_action_key]
     if snooze_hours_key in environ:
         tray["snooze_hours"] = _parse_env_int(environ[snooze_hours_key], snooze_hours_key)
+    if icon_style_key in environ:
+        tray["icon_style"] = environ[icon_style_key]
     cfg.tray = _merge_tray_config(tray)
     return cfg
 
@@ -290,16 +304,16 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
         lines.append(f"quiet_hours_start = {cfg.notifications.quiet_hours_start}")
     if cfg.notifications.quiet_hours_end is not None:
         lines.append(f"quiet_hours_end = {cfg.notifications.quiet_hours_end}")
+    if cfg.notifications.sound:
+        lines.append(f"sound = {str(cfg.notifications.sound).lower()}")
 
-    lines.extend(
-        [
-            "",
-            "[tray]",
-            f"click_action = {json.dumps(cfg.tray.click_action, ensure_ascii=False)}",
-            f"snooze_hours = {cfg.tray.snooze_hours}",
-            "",
-        ]
-    )
+    lines.append("")
+    lines.append("[tray]")
+    lines.append(f"click_action = {json.dumps(cfg.tray.click_action, ensure_ascii=False)}")
+    lines.append(f"snooze_hours = {cfg.tray.snooze_hours}")
+    if cfg.tray.icon_style != "default":
+        lines.append(f"icon_style = {json.dumps(cfg.tray.icon_style)}")
+    lines.append("")
     for name, src in cfg.sources.items():
         lines.append(f"[sources.{json.dumps(name, ensure_ascii=False)}]")
         lines.append(f"enabled = {str(src.enabled).lower()}")

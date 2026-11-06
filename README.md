@@ -10,12 +10,22 @@
 ## Features
 
 - **System tray applet** with periodic update checking and a badge counter
-- **Multi-source checking**: pacman, AUR (paru/yay), Flatpak version and branch, firmware, reboot state
-- **Smart notifications**: deduplication, quiet hours, snooze, and desktop action buttons
-- **Topgrade integration**: respects your `topgrade.toml`, launches in your preferred terminal
+- **Multi-source checking**: pacman, AUR (paru/yay/pikaur), Flatpak version and branch, firmware, reboot state — checkers run in parallel
+- **Smart notifications**: deduplication that survives restarts, quiet hours, snooze, desktop action buttons, optional sound, and critical-urgency reboot alerts
+- **Arch news**: reads the [archlinux.org news feed](https://archlinux.org/feeds/news/), flags items published since you last read the news, and opens them from the tray menu
+- **Event-driven checks**: re-checks shortly after the pacman database changes (someone ran an upgrade), after resume from suspend, and skips checks while offline
+- **Post-update maintenance reminders**: orphan packages, unmerged `.pacnew`/`.pacsave` files, oversized package cache — surfaced once per day after an update session ends
+- **Update history**: browsable list of recent upgrade sessions parsed from `/var/log/pacman.log`
+- **Dry-run preview**: launches `topgrade --dry-run` from the tray or dialog
+- **Topgrade integration**: respects your `topgrade.toml` (including `misc.disable`, `misc.only`, and `topgrade.d/` drop-ins), launches in your preferred terminal
+- **Package navigation**: double-click a package in the dialog or click it in the tray menu to open its upstream page
+- **Settings dialog**: edit interval, sources, quiet hours, terminals, icons, and more without touching TOML
+- **Colorblind-safe icon palette** (`tray.icon_style = "colorblind"`) plus a dedicated reboot-required icon
+- **Single instance**: a second tray launch exits instead of duplicating notifications
 - **Plugin architecture**: add custom checkers via entry points
 - **Configurable**: TOML config at `~/.config/topgrade-update/config.toml`
 - **CLI**: `topgrade-update --check`, `--list`, `--tray`, `--verbose`, `--json`
+- **systemd timer option**: run headless checks at boot and every 6 hours without the tray
 
 ## Installation
 
@@ -32,6 +42,16 @@ pip install -e '.[gui]'
 ```bash
 ./scripts/install-desktop-integration.sh
 topgrade-update --tray --enable   # autostart at login
+```
+
+### Headless checks with a systemd user timer
+
+Install a timer that runs `topgrade-update --check` at boot and every 6 hours
+(useful when the tray is not running, e.g. on a minimal WM setup):
+
+```bash
+./scripts/install-desktop-integration.sh --systemd-timer
+systemctl --user list-timers topgrade-update.timer   # verify
 ```
 
 ## Usage
@@ -91,12 +111,18 @@ enabled = true
 enabled = true
 quiet_hours_start = 23  # 11 PM
 quiet_hours_end = 7     # 7 AM
+sound = false           # request the notification server's default sound
 
 # Tray behavior
 [tray]
-click_action = "default"  # "default", "show_updates", "run_topgrade"
+click_action = "default"      # "default", "show_updates", "run_topgrade"
 snooze_hours = 4
+icon_style = "default"        # "default" or "colorblind"
 ```
+
+Snooze state and notification deduplication persist across restarts in
+`~/.local/state/topgrade-update/state.json`, so restarting the tray does not
+re-notify about updates you already saw.
 
 Configuration precedence is **CLI arguments → environment variables → TOML file → defaults**.
 Overrides apply to `--check`, `--list`, and `--tray`:
@@ -108,8 +134,10 @@ Overrides apply to `--check`, `--list`, and `--tray`:
 | Checker enablement | `TOPGRADE_UPDATE_SOURCE_<NAME>_ENABLED` | `--enable-source NAME` / `--disable-source NAME` |
 | Notifications | `TOPGRADE_UPDATE_NOTIFICATIONS_ENABLED` | `--enable-notifications` / `--disable-notifications` |
 | Quiet hours | `TOPGRADE_UPDATE_QUIET_HOURS_START`, `TOPGRADE_UPDATE_QUIET_HOURS_END` | `--quiet-hours-start HOUR`, `--quiet-hours-end HOUR`, or `--no-quiet-hours` |
+| Notification sound | `TOPGRADE_UPDATE_NOTIFICATIONS_SOUND` | `--sound` / `--no-sound` |
 | Tray click action | `TOPGRADE_UPDATE_TRAY_CLICK_ACTION` | `--tray-click-action ACTION` |
 | Snooze duration | `TOPGRADE_UPDATE_TRAY_SNOOZE_HOURS` | `--snooze-hours HOURS` |
+| Icon style | `TOPGRADE_UPDATE_TRAY_ICON_STYLE` | `--icon-style default\|colorblind` |
 
 Boolean environment values accept `true`/`false`, `yes`/`no`, `on`/`off`, or `1`/`0`.
 For checker names, use uppercase letters and preserve underscores; for example,
@@ -166,19 +194,26 @@ topgrade-update/
 │   │   │   ├── reboot.py     # Reboot-required detection
 │   │   │   └── __init__.py   # Public API re-exports
 │   │   ├── logging/          # Rotating file + optional console logging
+│   │   ├── arch_news.py      # Arch news feed reader + read markers
+│   │   ├── autostart.py      # XDG autostart management
 │   │   ├── config.py         # TOML config loader/saver
-│   │   ├── engine.py         # UpdateEngine (plugin orchestration)
+│   │   ├── engine.py         # UpdateEngine (parallel plugin orchestration)
+│   │   ├── history.py        # pacman.log upgrade-session parser
+│   │   ├── links.py          # Upstream package URL resolution
+│   │   ├── maintenance.py    # Orphans / pacnew / cache detection
 │   │   ├── models.py         # Update, CheckResult, Config dataclasses
+│   │   ├── network.py        # NetworkManager connectivity probe
 │   │   ├── notification_engine.py  # Dedup + quiet hours + deferral
 │   │   ├── notifications.py  # DBus/jeepney + notify-send client
 │   │   ├── quiet_hours.py    # Time window helpers
+│   │   ├── state.py          # Persistent snooze/dedup state (XDG_STATE_HOME)
 │   │   ├── subprocess.py     # Process-group timeout runner
-│   │   ├── topgrade_config.py # topgrade.toml parser
-│   │   └── autostart.py      # XDG autostart management
+│   │   └── topgrade_config.py # topgrade.toml/topgrade.d parser
 │   └── gui/
 │       ├── tray.py           # System tray applet (PySide6)
 │       ├── tray_logic.py     # Pure Python tray helpers (testable)
-│       ├── dialog.py         # Updates list dialog
+│       ├── dialog.py         # Updates, history, maintenance dialogs
+│       ├── settings.py       # Settings dialog
 │       └── icons.py          # Programmatic icon generation
 ├── tests/                    # pytest test suite
 ├── icons/                    # SVG icon assets

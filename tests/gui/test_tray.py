@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -22,10 +23,19 @@ def mock_cfg() -> Config:
     )
 
 
-def test_tray_initialization(mock_cfg: Config, qapp) -> None:  # noqa: ANN001
-    """Build real Qt tray objects and expose the expected menu actions."""
-    tray = Tray(mock_cfg)
+@pytest.fixture
+def tray(mock_cfg: Config, qapp, tmp_path) -> Tray:  # noqa: ANN001
+    """Tray isolated from the real pacman dir and user state file."""
+    return Tray(
+        mock_cfg,
+        pacman_db_dir=tmp_path / "no-pacman",
+        debounce_ms=50,
+        state_path=tmp_path / "state.json",
+    )
 
+
+def test_tray_initialization(tray: Tray) -> None:
+    """Build real Qt tray objects and expose the expected menu actions."""
     assert tray.toolTip() == APP_NAME
     assert tray.contextMenu() is not None
     action_labels = [action.text() for action in tray.contextMenu().actions()]
@@ -36,9 +46,8 @@ def test_tray_initialization(mock_cfg: Config, qapp) -> None:  # noqa: ANN001
     assert "Quit" in action_labels
 
 
-def test_snooze_logic_updates_status_and_timer(mock_cfg: Config, qapp) -> None:  # noqa: ANN001
+def test_snooze_logic_updates_status_and_timer(tray: Tray) -> None:
     """Snoozing records a target time, updates the menu, and arms its timer."""
-    tray = Tray(mock_cfg)
     started = datetime.now()
 
     tray._snooze(2)
@@ -51,10 +60,23 @@ def test_snooze_logic_updates_status_and_timer(mock_cfg: Config, qapp) -> None: 
     assert tray._snooze_timer.interval() == 7_200_000
 
 
-def test_is_snoozed_clears_expired_target(mock_cfg: Config, qapp) -> None:  # noqa: ANN001
-    """The tray recognizes active snoozes and clears expired targets."""
-    tray = Tray(mock_cfg)
+def test_snooze_persists_and_restores(mock_cfg: Config, qapp, tmp_path) -> None:  # noqa: ANN001
+    """Snooze and dedup state survive tray restarts via the state file."""
+    state_path = tmp_path / "state.json"
+    first = Tray(mock_cfg, pacman_db_dir=tmp_path / "db", state_path=state_path)
+    first._notification_engine.prev_total = 5
+    first._snooze(3)
+    snooze_target = first._snooze_until
 
+    second = Tray(mock_cfg, pacman_db_dir=tmp_path / "db", state_path=state_path)
+
+    assert second._snooze_until == snooze_target
+    assert second._snooze_timer.isActive()
+    assert second._notification_engine.prev_total == 5
+
+
+def test_is_snoozed_clears_expired_target(tray: Tray) -> None:
+    """The tray recognizes active snoozes and clears expired targets."""
     assert tray._is_snoozed() is False
     tray._snooze(1)
     assert tray._is_snoozed() is True
@@ -65,18 +87,17 @@ def test_is_snoozed_clears_expired_target(mock_cfg: Config, qapp) -> None:  # no
 
 
 def test_partial_check_failure_is_visible_in_status_and_tooltip(
-    mock_cfg: Config,
-    qapp,  # noqa: ANN001
+    tray: Tray,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The tray reports source failures even when another source found updates."""
-    tray = Tray(mock_cfg)
     sent_notifications: list[dict[str, object]] = []
 
     def capture_notification(_results: list[CheckResult], **kwargs: object) -> None:
         sent_notifications.append(kwargs)
 
     monkeypatch.setattr("topgrade_update.gui.tray.send_notification", capture_notification)
+    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", lambda: [])
     results = [
         CheckResult(
             source="pacman",
@@ -99,11 +120,9 @@ def test_partial_check_failure_is_visible_in_status_and_tooltip(
 
 
 def test_notification_actions_dispatch_to_tray_commands(
-    mock_cfg: Config,
-    qapp,  # noqa: ANN001
+    tray: Tray,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    tray = Tray(mock_cfg)
     called: list[str] = []
     monkeypatch.setattr(tray, "_run_topgrade", lambda: called.append("run"))
     monkeypatch.setattr(tray, "_snooze", lambda hours: called.append(f"snooze:{hours}"))
@@ -113,3 +132,161 @@ def test_notification_actions_dispatch_to_tray_commands(
     tray._on_notification_action("dismiss")
 
     assert called == ["run", "snooze:1"]
+
+
+def test_reboot_sends_critical_notification_once(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[tuple[str, str, str]] = []
+
+    def capture_message(summary: str, body: str, **kwargs: object) -> None:
+        urgency = str(kwargs.get("urgency"))
+        messages.append((summary, body, urgency))
+
+    monkeypatch.setattr("topgrade_update.gui.tray.send_message", capture_message)
+    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", lambda: [])
+    reboot_result = CheckResult(
+        source="reboot",
+        updates=[Update("kernel", "6.6", "reboot required", "reboot")],
+    )
+
+    tray._on_check_done([reboot_result])
+    tray._on_check_done([reboot_result])
+
+    assert len(messages) == 1
+    assert messages[0][0] == "Reboot required"
+    assert messages[0][2] == "critical"
+    # Icon reflects the reboot state with no package updates
+    # (QImage cache keys are content-based).
+    shown = tray.icon().pixmap(64, 64).toImage().cacheKey()
+    expected = tray._icon_cache.reboot().pixmap(64, 64).toImage().cacheKey()
+    assert shown == expected
+
+
+def test_reboot_flag_resets_when_no_longer_pending(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("topgrade_update.gui.tray.send_message", lambda *a, **k: None)
+    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", lambda: [])
+    reboot_result = CheckResult(
+        source="reboot",
+        updates=[Update("kernel", "6.6", "reboot required", "reboot")],
+    )
+    ok_result = CheckResult(source="pacman", updates=[])
+
+    tray._on_check_done([reboot_result])
+    assert tray._state.reboot_notified is True
+
+    tray._on_check_done([ok_result])
+    assert tray._state.reboot_notified is False
+
+
+def test_maintenance_reminder_fires_after_updates_clear(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[tuple[str, str]] = []
+
+    def capture_message(summary: str, body: str, **_kwargs: object) -> None:
+        messages.append((summary, body))
+
+    monkeypatch.setattr("topgrade_update.gui.tray.send_message", capture_message)
+
+    from topgrade_update.core.maintenance import MaintenanceFinding
+
+    def fake_summary(**_kwargs: object) -> list[MaintenanceFinding]:
+        return [MaintenanceFinding("orphans", "2 orphan package(s)", ["a", "b"])]
+
+    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", fake_summary)
+
+    with_updates = CheckResult(
+        source="pacman", updates=[Update("pkg", "1", "2", "pacman")]
+    )
+    done = CheckResult(source="pacman", updates=[])
+    tray._on_check_done([with_updates])
+    tray._on_check_done([done])
+
+    assert len(messages) == 1
+    assert messages[0][0] == "Post-update maintenance"
+    assert "orphan" in messages[0][1]
+
+    # Once per day: another cycle does not re-notify.
+    tray._on_check_done([with_updates])
+    tray._on_check_done([done])
+    assert len(messages) == 1
+
+
+def test_news_menu_and_mark_read(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from topgrade_update.core.arch_news import NewsItem
+
+    opened: list[str] = []
+    monkeypatch.setattr("topgrade_update.gui.tray.open_url", lambda url: opened.append(url))
+
+    fresh = NewsItem(
+        "Fresh news", "https://archlinux.org/news/fresh/", datetime.now() + timedelta(hours=1)
+    )
+    stale = NewsItem(
+        "Old news", "https://archlinux.org/news/old/", datetime.now() - timedelta(days=30)
+    )
+
+    # First run with no marker: nothing is new.
+    tray._on_check_done([], news=[fresh, stale])
+    assert tray._news_new_count == 0
+
+    # Mark read, then publish something newer: one new item.
+    tray._news_items = [fresh, stale]
+    tray._mark_news_read()
+    newer = NewsItem(
+        "Newer news", "https://archlinux.org/news/newer/", datetime.now() + timedelta(hours=2)
+    )
+    tray._on_check_done([], news=[newer, fresh, stale])
+
+    assert tray._news_new_count == 1
+    menu_labels = [action.text() for action in tray.contextMenu().actions()]
+    assert "Arch News (1 new)" in menu_labels
+
+
+def test_pacman_db_change_triggers_debounced_check(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+    qapp,  # noqa: ANN001
+) -> None:
+    from PySide6.QtCore import QEventLoop, QTimer
+
+    checks: list[int] = []
+    monkeypatch.setattr(tray, "_start_check", lambda: checks.append(1))
+
+    # Simulate the directoryChanged signal firing in bursts.
+    tray._on_db_changed_signal("/var/lib/pacman/local")
+    tray._on_db_changed_signal("/var/lib/pacman/local")
+
+    loop = QEventLoop()
+    QTimer.singleShot(150, loop.quit)
+    loop.exec()
+
+    assert checks == [1]  # debounced to a single check
+
+
+def test_offline_check_defers_and_retries(
+    mock_cfg: Config,
+    qapp,  # noqa: ANN001
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tray = Tray(
+        mock_cfg,
+        pacman_db_dir=tmp_path / "no-pacman",
+        state_path=tmp_path / "state.json",
+        debounce_ms=10,
+    )
+    monkeypatch.setattr("topgrade_update.gui.tray.is_online", lambda: False)
+
+    tray._start_check()
+
+    assert tray._action_status.text() == "Offline — waiting for network"
+    assert tray._offline_retry.isActive()

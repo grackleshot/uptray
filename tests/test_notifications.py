@@ -48,6 +48,34 @@ def test_notify_sends_action_buttons_and_returns_notification_id() -> None:
     assert bus.calls == ["dbus-message"]
 
 
+def test_notify_passes_urgency_and_sound_hints() -> None:
+    client, _bus, calls = _make_dbus_client()
+
+    client.notify("Reboot required", "Please reboot", urgency="critical", sound=True)
+
+    assert calls[0][3][6] == {"urgency": 2, "sound-name": "message"}
+
+
+def test_notify_ignores_unknown_urgency() -> None:
+    client, _bus, calls = _make_dbus_client()
+
+    client.notify("Hello", "World", urgency="bogus")
+
+    assert calls[0][3][6] == {}
+
+
+def test_notify_send_fallback_includes_urgency_flag(monkeypatch) -> None:  # noqa: ANN001
+    client = NotificationClient()
+    popen = Mock()
+    monkeypatch.setattr("topgrade_update.core.notifications.subprocess.Popen", popen)
+
+    client.notify("Reboot required", "Please reboot", urgency="critical")
+
+    command = popen.call_args.args[0]
+    assert "-u" in command
+    assert command[command.index("-u") + 1] == "critical"
+
+
 def test_notify_falls_back_without_action_support(monkeypatch) -> None:
     client, _bus, _calls = _make_dbus_client()
     client._supports_actions = lambda: False
@@ -62,7 +90,7 @@ def test_notify_falls_back_without_action_support(monkeypatch) -> None:
     )
 
     assert result is None
-    notify_send.assert_called_once_with("Updates", "2 available")
+    notify_send.assert_called_once_with("Updates", "2 available", None, False)
 
 
 def test_action_listener_dispatches_action_invoked_signal() -> None:

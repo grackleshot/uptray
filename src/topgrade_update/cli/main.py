@@ -90,6 +90,10 @@ def _apply_cli_overrides(
         cfg.tray.click_action = args.tray_click_action
     if args.snooze_hours is not None:
         cfg.tray.snooze_hours = args.snooze_hours
+    if args.icon_style is not None:
+        cfg.tray.icon_style = args.icon_style
+    if args.notification_sound is not None:
+        cfg.notifications.sound = args.notification_sound
 
 
 def _report_checker_errors(results: list[CheckResult]) -> bool:
@@ -129,7 +133,7 @@ def cmd_check(cfg: Config, verbose: bool = False) -> int:
         elif quiet:
             print("Notification suppressed during quiet hours.")
         else:
-            send_notification(results)
+            send_notification(results, sound=cfg.notifications.sound)
         print(f"{total} update(s) available.")
         return 2 if has_errors else 1
     if has_errors:
@@ -311,6 +315,18 @@ def main(argv: list[str] | None = None) -> int:
         type=lambda value: _parse_bounded_int(value, minimum=1, maximum=24, label="snooze hours"),
         help="Override the configured tray snooze duration (1–24 hours)",
     )
+    parser.add_argument(
+        "--icon-style", choices=("default", "colorblind"),
+        help="Override the tray icon palette",
+    )
+    parser.add_argument(
+        "--sound", dest="notification_sound", action="store_true", default=None,
+        help="Play the notification server's default sound",
+    )
+    parser.add_argument(
+        "--no-sound", dest="notification_sound", action="store_false",
+        help="Disable notification sound (default)",
+    )
     args = parser.parse_args(argv)
 
     if sum((args.check, args.list, args.tray)) > 1:
@@ -334,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
             args.no_quiet_hours,
             args.tray_click_action is not None,
             args.snooze_hours is not None,
+            args.icon_style is not None,
+            args.notification_sound is not None,
         )
     )
     if has_overrides and not (args.check or args.list or args.tray):

@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 APP_NAME = "Topgrade Update"
 ICON_NAME = "topgrade-update"
 
+_URGENCY_LEVELS = {"low": 0, "normal": 1, "critical": 2}
+
 
 class NotificationClient:
     """Hybrid notification client: DBus via jeepney, fallback to notify-send."""
@@ -148,6 +150,8 @@ class NotificationClient:
         actions: list[tuple[str, str]] | None = None,
         *,
         on_action: Callable[[str], None] | None = None,
+        urgency: str | None = None,
+        sound: bool = False,
     ) -> int | None:
         """Show a notification. Returns notification ID or None.
 
@@ -156,10 +160,13 @@ class NotificationClient:
             body: Notification body text.
             actions: List of (action_id, label) tuples for action buttons.
             on_action: Called with the action ID when the user selects a button.
+            urgency: Optional "low", "normal", or "critical" urgency level.
+            sound: Request the notification server's default sound.
 
         Returns:
             Notification ID from DBus, or None if fallback was used.
         """
+        normalized_urgency = urgency if urgency in _URGENCY_LEVELS else None
         if self._ensure_connection():
             if actions:
                 if on_action is None:
@@ -167,13 +174,13 @@ class NotificationClient:
                 else:
                     self.start_action_listener(on_action)
                     if not self._action_ready.wait(timeout=1.0):
-                        self._notify_send(summary, body)
+                        self._notify_send(summary, body, normalized_urgency, sound)
                         return None
                     if not self._action_listener_available or not self._supports_actions():
-                        self._notify_send(summary, body)
+                        self._notify_send(summary, body, normalized_urgency, sound)
                         return None
-            return self._notify_dbus(summary, body, actions)
-        self._notify_send(summary, body)
+            return self._notify_dbus(summary, body, actions, normalized_urgency, sound)
+        self._notify_send(summary, body, normalized_urgency, sound)
         return None
 
     def _notify_dbus(
@@ -181,6 +188,8 @@ class NotificationClient:
         summary: str,
         body: str,
         actions: list[tuple[str, str]] | None = None,
+        urgency: str | None = None,
+        sound: bool = False,
     ) -> int | None:
         assert self._bus is not None and self._proxy is not None
         action_list: list[str] = []
@@ -188,6 +197,7 @@ class NotificationClient:
             for action_id, label in actions:
                 action_list.append(action_id)
                 action_list.append(label)
+        hints = self._build_hints(urgency, sound)
         msg = self._new_method_call(
             self._proxy,
             "Notify",
@@ -199,7 +209,7 @@ class NotificationClient:
                 summary,
                 body,
                 action_list,
-                {},  # hints
+                hints,
                 -1,  # expire_timeout (server default)
             ),
         )
@@ -208,20 +218,37 @@ class NotificationClient:
             reply_body = getattr(reply, "body", ())
             return reply_body[0] if reply_body else None
         except Exception:
-            self._notify_send(summary, body)
+            self._notify_send(summary, body, urgency, sound)
             return None
 
-    def _notify_send(self, summary: str, body: str) -> None:
+    def _build_hints(self, urgency: str | None, sound: bool) -> dict[str, object]:
+        """Build the DBus hints dict (jeepney infers variant types from values)."""
+        hints: dict[str, object] = {}
+        if urgency in _URGENCY_LEVELS:
+            hints["urgency"] = _URGENCY_LEVELS[urgency]
+        if sound:
+            hints["sound-name"] = "message"
+        return hints
+
+    def _notify_send(
+        self,
+        summary: str,
+        body: str,
+        urgency: str | None = None,
+        sound: bool = False,
+    ) -> None:
+        command = [
+            "notify-send",
+            "-a", APP_NAME,
+            "-i", ICON_NAME,
+        ]
+        if urgency in _URGENCY_LEVELS:
+            command.extend(["-u", urgency])
+        if sound:
+            command.extend(["-h", "string:sound-name:message"])
+        command.extend([summary, body])
         with contextlib.suppress(FileNotFoundError):
-            subprocess.Popen(
-                [
-                    "notify-send",
-                    "-a", APP_NAME,
-                    "-i", ICON_NAME,
-                    summary,
-                    body,
-                ]
-            )
+            subprocess.Popen(command)
 
     def close(self, notification_id: int) -> None:
         """Close a notification by ID."""
@@ -273,6 +300,8 @@ def send_notification(
     *,
     on_action: Callable[[str], None] | None = None,
     client: NotificationClient | None = None,
+    urgency: str | None = None,
+    sound: bool = False,
 ) -> int | None:
     """Send a desktop notification summarising available updates.
 
@@ -283,6 +312,8 @@ def send_notification(
         body: Optional notification body override.
         on_action: Callback for a selected action button.
         client: Reusable client, usually owned by the tray applet.
+        urgency: Optional "low", "normal", or "critical" urgency level.
+        sound: Request the notification server's default sound.
 
     Returns:
         Notification ID if DBus was used, None otherwise.
@@ -300,9 +331,17 @@ def send_notification(
         notification_body,
         actions,
         on_action=on_action,
+        urgency=urgency,
+        sound=sound,
     )
 
 
-def send_message(summary: str, body: str) -> int | None:
+def send_message(
+    summary: str,
+    body: str,
+    *,
+    urgency: str | None = None,
+    sound: bool = False,
+) -> int | None:
     """Send a desktop notification without requiring update results."""
-    return NotificationClient().notify(summary, body)
+    return NotificationClient().notify(summary, body, urgency=urgency, sound=sound)

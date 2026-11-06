@@ -32,6 +32,16 @@ class NotificationEngine:
     def __init__(self) -> None:
         self._state = NotificationState()
 
+    @property
+    def prev_total(self) -> int:
+        """Return the update count seen by the last notification decision."""
+        return self._state.prev_total
+
+    @prev_total.setter
+    def prev_total(self, value: int) -> None:
+        """Restore a persisted decision count (e.g. after a tray restart)."""
+        self._state.prev_total = value
+
     def should_notify(self, results: list[CheckResult]) -> bool:
         """Return True if a notification should be sent for these results.
 

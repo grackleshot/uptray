@@ -31,15 +31,25 @@ Users never miss available system updates because the tray applet silently check
 - ✓ Per-checker error isolation (failed checker doesn't block others) — Phase 2
 - ✓ Flatpak checker with version/branch info — Phase 2
 - ✓ Backwards-compatible `check_all()` API via `UpdateEngine` — Phase 2
+- ✓ Snooze persistence across restarts (XDG_STATE_HOME state file) — 2026-11
+- ✓ Sound support for notifications (DBus sound hint + notify-send flag) — 2026-11
+- ✓ Dry-run preview before topgrade (`--dry-run` from tray/dialog) — 2026-11
+- ✓ Arch Linux news integration (NEWS-01): feed reader, [NEW] markers, read tracking — 2026-11
+- ✓ Post-update helper reminders (MAINT-01): orphans, pacnew/pacsave, cache size — 2026-11
+- ✓ pacman database watcher (re-check after manual upgrades) — 2026-11
+- ✓ Resume-from-suspend + offline awareness — 2026-11
+- ✓ Update history view (pacman.log session parser + dialog) — 2026-11
+- ✓ Settings GUI dialog — 2026-11
+- ✓ Colorblind icon variants + reboot icon state — 2026-11
+- ✓ Reboot-required critical notification — 2026-11
+- ✓ Parallel checker execution — 2026-11
+- ✓ topgrade.toml alignment: `misc.only`, `topgrade.d/` merge, pikaur AUR helper — 2026-11
+- ✓ Single-instance tray lock — 2026-11
+- ✓ systemd user timer for headless checks — 2026-11
 
 ### Active
 
-- [ ] Sound support for notifications
-- [ ] Dry-run preview before topgrade
-- [ ] i18n / gettext support
-- [ ] Arch Linux news integration (NEWS-01)
-- [ ] Post-update helper reminders (MAINT-01): orphans, pacnew, cache cleanup
-- [ ] Snooze persistence across restarts (save to disk)
+- [ ] i18n / gettext support (infrastructure not yet wrapped)
 
 ### Out of Scope
 
@@ -52,11 +62,14 @@ Users never miss available system updates because the tray applet silently check
 ## Context
 
 Started as a single ~400-line Python monolith. Evolved into a modular Python package with:
-- 25 source files, 72 tests, full type checking
-- Plugin architecture with 5 built-in checkers + entry point extensibility
-- System tray applet with badge, snooze, per-source breakdown
+- 32 source files, 133+ tests, full type checking
+- Plugin architecture with 5 built-in checkers (parallel execution) + entry point extensibility
+- System tray applet with badge, snooze (persistent), per-source package menus, news, history
+- Arch news feed integration with read markers
+- Post-update maintenance reminders (orphans, pacnew, cache)
+- Event-driven checks (pacman DB watcher, resume-from-suspend, offline gating)
 - Rotating file logging with per-checker timing
-- Desktop integration (SVG icon, .desktop file, install script)
+- Desktop integration (SVG icon, .desktop file, install script, optional systemd timer)
 - CI/CD with GitHub Actions (5 Python versions)
 - Comprehensive documentation (README, architecture docs)
 

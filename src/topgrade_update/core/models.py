@@ -50,6 +50,7 @@ class NotificationConfig:
     enabled: bool = True
     quiet_hours_start: int | None = None  # 0-23, inclusive
     quiet_hours_end: int | None = None  # 0-23, inclusive
+    sound: bool = False  # request the server's default notification sound
 
 
 @dataclass
@@ -58,6 +59,7 @@ class TrayConfig:
 
     click_action: str = "default"  # "default", "show_updates", "run_topgrade"
     snooze_hours: int = 4
+    icon_style: str = "default"  # "default", "colorblind"
 
 
 @dataclass

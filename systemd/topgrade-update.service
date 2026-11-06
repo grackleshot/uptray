@@ -1,0 +1,13 @@
+[Unit]
+Description=Topgrade Update one-shot update check
+Documentation=https://github.com/grackleshot/topgrade-update
+# Network is helpful but not required (local checkers still run);
+# waiting when available avoids offline error noise.
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+# exit 0 = up to date, 1 = updates available, 2 = check errors
+SuccessExitStatus=1 2
+ExecStart=/usr/bin/env topgrade-update --check
