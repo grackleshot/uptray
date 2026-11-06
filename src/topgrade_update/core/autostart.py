@@ -1,18 +1,26 @@
 """XDG autostart management."""
 
 import os
+import shutil
 from pathlib import Path
 
 _CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
 AUTOSTART_DIR = _CONFIG_HOME / "autostart"
 AUTOSTART_FILE = AUTOSTART_DIR / "topgrade-update-tray.desktop"
 
-_AUTOSTART_CONTENT = """\
+# systemd-xdg-autostart-generator resolves bare Exec names against the user
+# manager's PATH, which does not include ~/.local/bin on this system, so the
+# autostart unit is silently not generated. Always write an absolute path.
+_EXEC_PATH = shutil.which("topgrade-update") or str(
+    Path.home() / ".local" / "bin" / "topgrade-update"
+)
+
+_AUTOSTART_CONTENT = f"""\
 [Desktop Entry]
 Type=Application
 Name=Topgrade Update
 Comment=System tray applet for topgrade update notifications
-Exec=topgrade-update --tray
+Exec={_EXEC_PATH} --tray
 Icon=topgrade-update
 Terminal=false
 X-KDE-autostart-phase=2
