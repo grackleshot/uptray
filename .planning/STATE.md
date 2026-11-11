@@ -128,3 +128,12 @@ Monitoring artifacts: run transcripts in ~/.local/share/topgrade-update/runs/
 adding one for tests). Tray checker vs topgrade mismatch investigated: paru's
 "marked out of date" list does NOT mean updates exist (paru said "nothing to
 do"); the aur checker was right. 172 tests pass; ruff + mypy strict clean.
+
+## Next round planned (2026-11-11)
+
+- Plan written to `.planning/IMPROVEMENTS-2026-11.md` — 15 items in three
+  priority tiers, grounded in the 2026-11-10 live-run findings (step-name
+  timestamps, injectable runs dir, terminal overlap repro, failure reasons,
+  askpass unification, prompt-bar v2, dry-run handoff, run history, persisted
+  geometry, keyboard pass, per-source updates, i18n last, tray detail,
+  liveness hint, housekeeping). Suggested order inside the file.
