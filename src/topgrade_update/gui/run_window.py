@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -36,6 +37,8 @@ from topgrade_update.core.logging import get_logger
 from topgrade_update.core.topgrade_session import (
     AskpassRequest,
     OutputChunk,
+    PromptCleared,
+    PromptRequest,
     RetryPrompt,
     SessionFinished,
     StepEvent,
@@ -116,6 +119,7 @@ class RunWindow(QMainWindow):
         self._elapsed = 0
         self._retry_visible = False
         self._activity_line = ""
+        self._state_kind: str | None = None
 
         self.setWindowTitle(title or "Topgrade Update — Run")
         self.setMinimumSize(840, 560)
@@ -301,6 +305,38 @@ class RunWindow(QMainWindow):
         self._retry_bar.hide()
         layout.addWidget(self._retry_bar)
 
+        # --- Interactive prompt strip --------------------------------------
+        # Surfaced whenever the running command asks a [Y/n]-style question.
+        self._prompt_bar = QFrame()
+        self._prompt_bar.setStyleSheet(
+            f"QFrame {{ background: {tokens['warning_bg']};"
+            f" border: 1px solid {tokens['warning']}; border-radius: 8px; }}"
+            "QLabel { background: transparent; border: none; }"
+            "QPushButton { background: transparent; }"
+        )
+        prompt_layout = QHBoxLayout(self._prompt_bar)
+        prompt_layout.setContentsMargins(12, 8, 12, 8)
+        prompt_layout.setSpacing(8)
+        prompt_icon = QLabel()
+        prompt_icon.setPixmap(status_pixmap("warning", ICON_SM))
+        prompt_layout.addWidget(prompt_icon)
+        self._prompt_label = QLabel("")
+        self._prompt_label.setWordWrap(True)
+        prompt_layout.addWidget(self._prompt_label, 1)
+        self._btn_prompt_yes = QPushButton("Yes")
+        self._btn_prompt_no = QPushButton("No")
+        self._btn_prompt_term = QPushButton("Answer in terminal")
+        self._btn_prompt_yes.clicked.connect(lambda: self._answer_prompt("y"))
+        self._btn_prompt_no.clicked.connect(lambda: self._answer_prompt("n"))
+        self._btn_prompt_term.clicked.connect(
+            functools.partial(self._answer_prompt, None)
+        )
+        prompt_layout.addWidget(self._btn_prompt_yes)
+        prompt_layout.addWidget(self._btn_prompt_no)
+        prompt_layout.addWidget(self._btn_prompt_term)
+        self._prompt_bar.hide()
+        layout.addWidget(self._prompt_bar)
+
         # --- Diagnose drawer ---------------------------------------------
         self._diagnose = QFrame()
         self._diagnose.setStyleSheet(
@@ -337,8 +373,18 @@ class RunWindow(QMainWindow):
         self._agent_term.input_ready.connect(self._agent_write)
         self._agent_term.set_resize_handler(self._on_agent_resize)
         diag_layout.addWidget(self._agent_term)
+        self._diagnose.setMinimumHeight(200)
         self._diagnose.hide()
-        layout.addWidget(self._diagnose)
+
+        # Resizable vertical split: the diagnose drawer must be drag-resizable,
+        # not squeezed into whatever space the layout has left over.
+        self._splitter = QSplitter(Qt.Orientation.Vertical)
+        self._splitter.addWidget(body)
+        self._splitter.addWidget(self._diagnose)
+        self._splitter.setCollapsible(0, False)
+        self._splitter.setCollapsible(1, True)
+        self._splitter.setSizes([1000, 0])
+        layout.addWidget(self._splitter, 1)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -417,6 +463,10 @@ class RunWindow(QMainWindow):
     def _try_again(self) -> None:
         """Reset the run state and start a fresh topgrade session."""
         self._hero_actions.hide()
+        self._prompt_bar.hide()
+        self._state_kind = None
+        self._progress.setRange(0, 0)
+        self._progress.show()
         self._btn_diagnose.setDefault(False)
         self._btn_diagnose.setProperty("class", None)
         self._btn_diagnose.style().unpolish(self._btn_diagnose)
@@ -446,11 +496,17 @@ class RunWindow(QMainWindow):
     # Header / Simple-pane state
 
     def _set_state(self, kind: str, title: str, subtitle_html: str) -> None:
-        """Update the header and Simple-pane hero for a run state."""
+        """Update the header and Simple-pane hero for a run state.
+
+        Icons are only swapped when the kind *changes*: the running state
+        redraws every second and must not fight the animated spinner.
+        """
         tokens = colors()
-        self._state_icon.setPixmap(status_pixmap(kind, ICON_LG))
+        if kind != self._state_kind:
+            self._state_kind = kind
+            self._state_icon.setPixmap(status_pixmap(kind, ICON_LG))
+            self._big_icon.setPixmap(status_pixmap(kind, ICON_XL))
         self._state_label.setText(title)
-        self._big_icon.setPixmap(status_pixmap(kind, ICON_XL))
         self._big_title.setText(title)
         self._subtitle_label.setText(
             f'<span style="color:{tokens["muted"]}">{subtitle_html}</span>'
@@ -459,36 +515,28 @@ class RunWindow(QMainWindow):
             f'<span style="color:{tokens["muted"]}">{subtitle_html}</span>'
         )
 
-    def _step_progress(self) -> tuple[int, int]:
-        """Return (finished steps, total known steps)."""
-        finished = sum(
-            1
-            for step in self._steps.values()
-            if step.status in {"succeeded", "failed", "skipped"}
-        )
-        return finished, len(self._step_order)
-
     def _refresh_subtitle(self) -> None:
-        """Rebuild the live subtitle: step counter, current step, elapsed."""
+        """Rebuild the live subtitle: step ordinal, current step, elapsed.
+
+        topgrade discovers steps lazily, so a "Step N of M" total would keep
+        moving; report the ordinal alone.
+        """
         if self._returncode is not None:
             return
-        finished, total = self._step_progress()
         parts: list[str] = []
-        if total:
-            parts.append(f"Step {min(finished + 1, total)} of {total}")
-        if self._current_step:
-            parts.append(self._current_step)
+        if self._current_step is not None and self._current_step in self._step_order:
+            ordinal = self._step_order.index(self._current_step) + 1
+            parts.append(f"Step {ordinal} · {self._current_step}")
+        elif self._step_order:
+            parts.append(f"{len(self._step_order)} steps done")
         parts.append(_format_elapsed(self._elapsed))
         self._set_state("running", "Updating your computer…", " · ".join(parts))
 
     def _refresh_progress(self) -> None:
-        finished, total = self._step_progress()
-        if total == 0:
-            if self._returncode is None:
-                self._progress.setRange(0, 0)  # busy pulse
+        """The bar stays a busy pulse while the run is underway (totals unknown)."""
+        if self._returncode is not None:
             return
-        self._progress.setRange(0, 100)
-        self._progress.setValue(int(finished * 100 / total))
+        self._progress.setRange(0, 0)
 
     # ------------------------------------------------------------------
     # Session events
@@ -507,6 +555,13 @@ class RunWindow(QMainWindow):
             return
         if isinstance(event, AskpassRequest):
             self._handle_askpass(event)
+            return
+        if isinstance(event, PromptRequest):
+            self._prompt_label.setText(event.question)
+            self._prompt_bar.show()
+            return
+        if isinstance(event, PromptCleared):
+            self._prompt_bar.hide()
             return
         if isinstance(event, SessionFinished):
             self._finish(event)
@@ -599,6 +654,8 @@ class RunWindow(QMainWindow):
         self._log_path = event.log_path
         self._failed_step = event.failed_step or self._failed_step
         self._retry_bar.hide()
+        self._prompt_bar.hide()
+        self._sweep_open_steps()
         self._btn_cancel.setText("Close")
         # Cancel was marked destructive; as a plain Close it loses the role.
         self._btn_cancel.setProperty("class", None)
@@ -606,8 +663,8 @@ class RunWindow(QMainWindow):
         self._btn_cancel.style().polish(self._btn_cancel)
         elapsed = _format_elapsed(self._elapsed)
         if event.returncode == 0:
-            self._progress.setRange(0, 100)
-            self._progress.setValue(100)
+            self._progress.setRange(0, 1)
+            self._progress.setValue(1)
             self._set_state(
                 "done",
                 "All done!",
@@ -617,10 +674,8 @@ class RunWindow(QMainWindow):
             self._btn_cancel.setDefault(True)
             set_primary(self._btn_cancel)
         else:
-            self._progress.setRange(0, 100)
-            finished, total = self._step_progress()
-            if total:
-                self._progress.setValue(int(finished * 100 / total))
+            # A determinate fraction would imply a known total; drop the bar.
+            self._progress.hide()
             failed = self._failed_step or self._current_step
             detail = f"Exit code {event.returncode} · {elapsed}"
             if failed:
@@ -634,11 +689,35 @@ class RunWindow(QMainWindow):
         if self._on_finished is not None:
             self._on_finished(event.returncode)
 
+    def _sweep_open_steps(self) -> None:
+        """Mark steps left pending/running at exit so nothing shows 'Running…'."""
+        for name in self._step_order:
+            if self._steps[name].status in {"pending", "running"}:
+                item = self._step_items.get(name)
+                if item is not None:
+                    item.setText(f"{name} — Ended")
+                    item.setIcon(status_pixmap("skipped", ICON_SM))
+
     def _review_log(self) -> None:
         ReviewLogDialog(current=self._log_path, parent=self).exec()
 
     def _toggle_diagnose(self) -> None:
-        self._diagnose.setVisible(not self._diagnose.isVisible())
+        if self._diagnose.isVisible():
+            self._diagnose.hide()
+            self._splitter.setSizes([1000, 0])
+            return
+        self._diagnose.show()
+        total = max(1, sum(self._splitter.sizes()) or self._splitter.height())
+        self._splitter.setSizes([int(total * 0.62), int(total * 0.38)])
+
+    def _answer_prompt(self, answer: str | None) -> None:
+        """Reply to a detected prompt, or hand control to the terminal."""
+        if answer is None:
+            self._prompt_bar.hide()
+            self._set_mode("verbose")
+            return
+        self._pty_write(f"{answer}\n")
+        self._prompt_bar.hide()
 
     def _start_agent(self) -> None:
         if self._agent_combo.count() == 0:

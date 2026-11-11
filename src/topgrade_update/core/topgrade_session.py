@@ -63,6 +63,10 @@ _RESULT_RE = re.compile(
     r"^(?P<name>.+?):\s+(?P<status>OK|FAILED|IGNORED|SKIPPED)(?::\s*(?P<reason>.*))?$"
 )
 _RETRY_RE = re.compile(re.escape(RETRY_PROMPT))
+# Interactive yes/no prompts use the [Y/n] bracket convention (topgrade child
+# commands: paru, pacdiff, maintainer scripts, ...). Anything between the
+# brackets may decorate y/n (e.g. [yes/no], [Y/n/?]).
+_PROMPT_RE = re.compile(r"\[[^\]]*[Yy][^\]]*/[^\]]*[Nn][^\]]*\]")
 _AGENT_COMMANDS: dict[str, tuple[str, ...]] = {
     "claude": ("claude",),
     "codex": ("codex",),
@@ -77,6 +81,7 @@ class SessionEventKind(Enum):
     STEP = "step"
     RETRY = "retry"
     ASKPASS = "askpass"
+    PROMPT = "prompt"
     FINISHED = "finished"
 
 
@@ -117,6 +122,25 @@ class AskpassRequest:
 
 
 @dataclass(frozen=True)
+class PromptRequest:
+    """The running command asked the user a yes/no question.
+
+    Detected from the standard ``[Y/n]``-style bracket convention in the
+    PTY output. One event per unique question until output resumes.
+    """
+
+    question: str
+    kind: SessionEventKind = SessionEventKind.PROMPT
+
+
+@dataclass(frozen=True)
+class PromptCleared:
+    """A previously announced prompt was answered or superseded."""
+
+    kind: SessionEventKind = SessionEventKind.PROMPT
+
+
+@dataclass(frozen=True)
 class SessionFinished:
     """The PTY child exited."""
 
@@ -126,7 +150,15 @@ class SessionFinished:
     kind: SessionEventKind = SessionEventKind.FINISHED
 
 
-SessionEvent = OutputChunk | StepEvent | RetryPrompt | AskpassRequest | SessionFinished
+SessionEvent = (
+    OutputChunk
+    | StepEvent
+    | RetryPrompt
+    | AskpassRequest
+    | PromptRequest
+    | PromptCleared
+    | SessionFinished
+)
 
 
 @dataclass
@@ -137,6 +169,7 @@ class _ParserState:
     current_step: str | None = None
     failed_step: str | None = None
     steps: dict[str, StepStatus] = field(default_factory=dict)
+    last_prompt: str | None = None
 
 
 def strip_ansi(text: str) -> str:
@@ -206,7 +239,30 @@ def parse_topgrade_chunk(state: _ParserState, chunk: str) -> list[SessionEvent]:
     if state.buffer and _RETRY_RE.search(strip_ansi(state.buffer)):
         events.append(RetryPrompt(step_name=state.current_step))
         state.buffer = ""
+        return events
+    # Yes/no prompts frequently dangle without a newline while awaiting input.
+    if state.buffer:
+        stripped = strip_ansi(state.buffer).strip()
+        match = _PROMPT_RE.search(stripped) if stripped else None
+        if match is not None and not _prompt_answer_tail(stripped, match):
+            question = stripped
+            if question != state.last_prompt:
+                state.last_prompt = question
+                events.append(PromptRequest(question=question))
+        elif state.last_prompt is not None and stripped:
+            # Non-empty output that is not a dangling prompt: the pending
+            # prompt was answered (PTY echo) or superseded.
+            state.last_prompt = None
+            events.append(PromptCleared())
     return events
+
+
+def _prompt_answer_tail(line: str, match: re.Match[str]) -> str:
+    """Return meaningful text after a prompt bracket (an echoed answer).
+
+    Trailing prompt decoration (a lone colon) does not count as an answer.
+    """
+    return line[match.end() :].strip().rstrip(":").strip()
 
 
 def _parse_line(state: _ParserState, raw_line: str) -> list[SessionEvent]:
@@ -217,6 +273,21 @@ def _parse_line(state: _ParserState, raw_line: str) -> list[SessionEvent]:
     events: list[SessionEvent] = []
     if _RETRY_RE.search(line):
         events.append(RetryPrompt(step_name=state.current_step))
+        return events
+
+    if state.last_prompt is not None:
+        # Output resumed after a prompt: it was answered or superseded.
+        state.last_prompt = None
+        events.append(PromptCleared())
+
+    prompt_match = _PROMPT_RE.search(line)
+    if prompt_match is not None:
+        if _prompt_answer_tail(line, prompt_match):
+            # Answer echoed on the prompt line: consumed, not a new question.
+            return events
+        if line != state.last_prompt:
+            state.last_prompt = line
+            events.append(PromptRequest(question=line))
         return events
 
     separator = _SEPARATOR_BOX_RE.search(line) or _SEPARATOR_PLAIN_RE.search(line)

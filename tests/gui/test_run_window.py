@@ -81,3 +81,42 @@ def test_review_log_lists_current_transcript(
     assert dialog._list.count() >= 1
     dialog.close()
     window.close()
+
+
+def test_run_window_prompt_bar_announces_and_clears(
+    qapp, qtbot, tmp_path, monkeypatch  # noqa: ANN001
+) -> None:
+    """Detected [Y/n] prompts show the strip; cleared events hide it."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    from topgrade_update.core.topgrade_session import PromptCleared, PromptRequest
+
+    window = RunWindow(
+        Config(run_mode="simple"),
+        command=_fake_command(tmp_path),
+    )
+    window._on_session_event(PromptRequest(question="Continue? [y/N]:"))
+    assert not window._prompt_bar.isHidden()
+    assert "Continue?" in window._prompt_label.text()
+    window._on_session_event(PromptCleared())
+    assert window._prompt_bar.isHidden()
+    window.close()
+
+
+def test_diagnose_drawer_opens_resizable(
+    qapp, qtbot, tmp_path, monkeypatch  # noqa: ANN001
+) -> None:
+    """The diagnose drawer takes a substantial, user-resizable share."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    window = RunWindow(
+        Config(run_mode="simple"),
+        command=_fake_command(tmp_path),
+    )
+    window.show()
+    qtbot.waitUntil(lambda: window._returncode is not None, timeout=5000)
+    window._toggle_diagnose()
+    assert not window._diagnose.isHidden()
+    sizes = window._splitter.sizes()
+    assert sizes[1] >= 200
+    window._toggle_diagnose()
+    assert window._diagnose.isHidden()
+    window.close()

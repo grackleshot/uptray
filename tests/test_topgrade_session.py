@@ -11,6 +11,8 @@ import pytest
 
 from topgrade_update.core.topgrade_session import (
     OutputChunk,
+    PromptCleared,
+    PromptRequest,
     RetryPrompt,
     SessionFinished,
     StepEvent,
@@ -216,3 +218,35 @@ def test_incremental_utf8_decode_preserves_step_separator() -> None:
         for event in events
     )
 
+
+
+def test_parser_detects_and_clears_yn_prompts() -> None:
+    """Bracket-style prompts surface once, then clear when output resumes."""
+    state = _ParserState()
+    # Prompt arrives without a trailing newline, as PTYs usually deliver it.
+    events = parse_topgrade_chunk(state, "── 12:00:00 - paru cleanup ──\n")
+    events += parse_topgrade_chunk(state, "Clean ALL AUR packages from cache? [y/N]: ")
+    prompts = [event for event in events if isinstance(event, PromptRequest)]
+    assert [p.question for p in prompts] == ["Clean ALL AUR packages from cache? [y/N]:"]
+
+    # The same prompt text again must not re-announce.
+    events = parse_topgrade_chunk(state, "")
+    assert not [event for event in events if isinstance(event, PromptRequest)]
+
+    # Typed answer echoes back: the prompt clears exactly once.
+    events = parse_topgrade_chunk(state, "y\r\n")
+    assert any(isinstance(event, PromptCleared) for event in events)
+    assert not any(isinstance(event, PromptRequest) for event in events)
+
+
+def test_parser_new_prompt_supersedes_previous() -> None:
+    """A pending announcement clears when the next question appears."""
+    state = _ParserState()
+    parse_topgrade_chunk(state, "Remove saved diffs? [Y/n]: ")
+    # Answer arrives in the next chunk, immediately followed by a new prompt.
+    events = parse_topgrade_chunk(state, "n\nClean cache too? [y/N]: ")
+    assert any(isinstance(event, PromptCleared) for event in events)
+    questions = [
+        event.question for event in events if isinstance(event, PromptRequest)
+    ]
+    assert questions == ["Clean cache too? [y/N]:"]

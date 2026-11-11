@@ -99,3 +99,32 @@ None.
 - Tests: label assertion updated to "Run in Terminal" (168 pass). ruff + mypy src clean.
 - Gotcha: QSS-in-Python needs f-strings with doubled braces on EVERY segment; mixed
   plain/f-string concatenation silently emits `{{`.
+
+## Session 2026-11-10 (evening): live-run findings + fixes
+
+Replaced the running tray with the new build and ran a REAL topgrade session
+(23 steps, 15+ minutes: pacman, firmware, npm, containers, GitHub CLI, Claude
+Code, Ollama, Hermes Agent...). The redesigned UI tracked it correctly in dark
+theme (KDE palette detection worked). Real-usage findings, all fixed:
+
+- Spinner flicker: the 1s tick rebuilt the header and reset the icon to the
+  static clock, fighting the 120ms spinner. Fix: `_state_kind` guard — icons
+  only change on state transitions.
+- Fake step totals: header read "Step N of N" because topgrade discovers steps
+  lazily. Fix: "Step N · <current> · elapsed" (no denominator); progress bar
+  stays a busy pulse during the run, fills on success, hides on failure.
+- Stale "Running…" steps at exit (e.g. pacdiff died mid-step): `_finish` now
+  sweeps pending/running steps to "— Ended".
+- Diagnose drawer was a layout-squeezed sliver: now the bottom pane of a
+  resizable vertical QSplitter (62% default on open, min 200px).
+- NEW FEATURE — prompt surfacing: session parser detects `[Y/n]`-style
+  questions (PromptRequest/PromptCleared; echo-on-same-line counts as an
+  answer; trailing colon is decoration). RunWindow shows an amber prompt bar
+  with Yes / No / Answer-in-terminal. Verified E2E with interactive fake
+  commands over a real PTY.
+
+Monitoring artifacts: run transcripts in ~/.local/share/topgrade-update/runs/
+(test harness runs used to pollute it — no injectable runs dir yet; consider
+adding one for tests). Tray checker vs topgrade mismatch investigated: paru's
+"marked out of date" list does NOT mean updates exist (paru said "nothing to
+do"); the aur checker was right. 172 tests pass; ruff + mypy strict clean.
