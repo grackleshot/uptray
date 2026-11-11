@@ -1,9 +1,25 @@
-"""Programmatic icon generation for the system tray."""
+"""Programmatic icon generation for the system tray and dialogs.
+
+Every status is encoded by shape as well as color (arrow / clock / check /
+cross / dash / ring / restart arrows) so tray and step states stay readable
+without relying on hue alone.
+"""
 
 from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap, QPolygonF
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
+
+from topgrade_update.gui.style import colors
 
 _SIZE = 64
 
@@ -27,6 +43,25 @@ _PALETTES: dict[str, dict[str, str]] = {
     },
 }
 
+# Tray state -> (palette token, glyph).
+_TRAY_KINDS: dict[str, tuple[str, str]] = {
+    "idle": ("idle", "blank"),
+    "checking": ("checking", "clock"),
+    "uptodate": ("uptodate", "check"),
+    "updates": ("updates", "arrow"),
+    "reboot": ("reboot", "reboot"),
+}
+
+# In-window status kinds -> (theme token, glyph).
+_STATUS_KINDS: dict[str, tuple[str, str]] = {
+    "pending": ("muted", "ring"),
+    "running": ("accent", "clock"),
+    "done": ("success", "check"),
+    "failed": ("danger", "cross"),
+    "skipped": ("muted", "dash"),
+    "warning": ("warning", "triangle"),
+}
+
 
 class IconCache:
     """Cache for generated tray icons to avoid repeated pixmap creation."""
@@ -35,10 +70,7 @@ class IconCache:
         """Create an icon cache using the named palette style."""
         self._style = style if style in _PALETTES else "default"
         self._colors = _PALETTES[self._style]
-        self._idle: QIcon | None = None
-        self._checking: QIcon | None = None
-        self._uptodate: QIcon | None = None
-        self._reboot: QIcon | None = None
+        self._cache: dict[str, QIcon] = {}
         self._updates: dict[str, QIcon] = {}
 
     @property
@@ -47,37 +79,46 @@ class IconCache:
         return self._style
 
     def idle(self) -> QIcon:
-        """Return the idle-state icon."""
-        if self._idle is None:
-            self._idle = _make_icon(self._colors["idle"])
-        return self._idle
+        """Return the idle-state icon (plain dot, no glyph)."""
+        return self._tray_icon("idle")
 
     def checking(self) -> QIcon:
-        """Return the checking-state icon."""
-        if self._checking is None:
-            self._checking = _make_icon(self._colors["checking"])
-        return self._checking
+        """Return the checking-state icon (clock glyph)."""
+        return self._tray_icon("checking")
 
     def uptodate(self) -> QIcon:
-        """Return the up-to-date icon."""
-        if self._uptodate is None:
-            self._uptodate = _make_icon(self._colors["uptodate"])
-        return self._uptodate
+        """Return the up-to-date icon (checkmark glyph)."""
+        return self._tray_icon("uptodate")
 
     def reboot(self) -> QIcon:
-        """Return the reboot-required icon."""
-        if self._reboot is None:
-            self._reboot = _make_icon(self._colors["reboot"], glyph="reboot")
-        return self._reboot
+        """Return the reboot-required icon (restart arrows glyph)."""
+        return self._tray_icon("reboot")
 
     def updates(self, count: int) -> QIcon:
         """Return an updates-available icon with a badge count."""
         key = str(count) if count < 100 else "99+"
         if key not in self._updates:
+            color, glyph = _TRAY_KINDS["updates"]
             self._updates[key] = _make_icon(
-                self._colors["updates"], key, self._colors["badge"]
+                self._colors[color],
+                key,
+                self._colors["badge"],
+                glyph=glyph,
             )
         return self._updates[key]
+
+    def _tray_icon(self, kind: str) -> QIcon:
+        if kind not in self._cache:
+            color, glyph = _TRAY_KINDS[kind]
+            self._cache[kind] = _make_icon(self._colors[color], glyph=glyph)
+        return self._cache[kind]
+
+
+def status_pixmap(kind: str, size: int = 16) -> QPixmap:
+    """Return a small status icon (pending/running/done/failed/skipped/warning)."""
+    tokens = colors()
+    color, glyph = _STATUS_KINDS.get(kind, ("muted", "ring"))
+    return _make_icon(tokens[color], glyph=glyph).pixmap(size)
 
 
 def _make_icon(
@@ -102,7 +143,19 @@ def _make_icon(
     if glyph == "reboot":
         # Circular-arrows style reboot hint drawn from arc segments.
         _draw_reboot_glyph(p, cx, cy)
-    else:
+    elif glyph == "check":
+        _draw_check_glyph(p, cx, cy)
+    elif glyph == "cross":
+        _draw_cross_glyph(p, cx, cy)
+    elif glyph == "clock":
+        _draw_clock_glyph(p, cx, cy)
+    elif glyph == "ring":
+        _draw_ring_glyph(p, cx, cy)
+    elif glyph == "dash":
+        _draw_dash_glyph(p, cx, cy)
+    elif glyph == "triangle":
+        _draw_triangle_glyph(p, cx, cy, QColor(color))
+    elif glyph == "arrow":
         arrow = QPolygonF(
             [
                 QPointF(cx, cy - 16),
@@ -115,6 +168,7 @@ def _make_icon(
             ]
         )
         p.drawPolygon(arrow)
+    # glyph == "blank": no glyph, plain disc.
 
     # Badge
     if badge_text and badge_color:
@@ -135,21 +189,98 @@ def _make_icon(
     return QIcon(pix)
 
 
+def _white_pen(width: float) -> QPen:
+    pen = QPen(QColor("#ffffff"), width)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+    return pen
+
+
+def _draw_check_glyph(p: QPainter, cx: float, cy: float) -> None:
+    """Draw a bold checkmark for the up-to-date/done state."""
+    p.setPen(_white_pen(6))
+    path = QPainterPath()
+    path.moveTo(cx - 12, cy + 1)
+    path.lineTo(cx - 3, cy + 10)
+    path.lineTo(cx + 13, cy - 10)
+    p.drawPath(path)
+
+
+def _draw_cross_glyph(p: QPainter, cx: float, cy: float) -> None:
+    """Draw a bold cross for the failed state."""
+    p.setPen(_white_pen(6))
+    path = QPainterPath()
+    path.moveTo(cx - 10, cy - 10)
+    path.lineTo(cx + 10, cy + 10)
+    path.moveTo(cx + 10, cy - 10)
+    path.lineTo(cx - 10, cy + 10)
+    p.drawPath(path)
+
+
+def _draw_clock_glyph(p: QPainter, cx: float, cy: float) -> None:
+    """Draw a clock face for the checking/running state."""
+    p.setPen(_white_pen(5))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    radius = 15.0
+    p.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
+    # Hands: centre -> 12 o'clock -> ~4 o'clock.
+    path = QPainterPath()
+    path.moveTo(cx, cy)
+    path.lineTo(cx, cy - 9)
+    path.lineTo(cx + 7, cy + 4)
+    p.drawPath(path)
+
+
+def _draw_ring_glyph(p: QPainter, cx: float, cy: float) -> None:
+    """Draw a hollow circle for the pending state."""
+    p.setPen(_white_pen(5))
+    p.setBrush(Qt.BrushStyle.NoBrush)
+    radius = 13.0
+    p.drawEllipse(QRectF(cx - radius, cy - radius, radius * 2, radius * 2))
+
+
+def _draw_dash_glyph(p: QPainter, cx: float, cy: float) -> None:
+    """Draw a horizontal dash for the skipped state."""
+    p.setPen(_white_pen(6))
+    p.drawLine(QPointF(cx - 11, cy), QPointF(cx + 11, cy))
+
+
+def _draw_triangle_glyph(p: QPainter, cx: float, cy: float, disc: QColor) -> None:
+    """Draw a warning triangle; body white, exclamation punched in the disc."""
+    p.setPen(Qt.PenStyle.NoPen)
+    triangle = QPolygonF(
+        [
+            QPointF(cx, cy - 15),
+            QPointF(cx - 15, cy + 11),
+            QPointF(cx + 15, cy + 11),
+        ]
+    )
+    p.setBrush(QColor("#ffffff"))
+    p.drawPolygon(triangle)
+    # Exclamation mark drawn in the disc color so it reads inside the triangle.
+    pen = QPen(disc, 4)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+    p.setPen(pen)
+    path = QPainterPath()
+    path.moveTo(cx, cy - 7)
+    path.lineTo(cx, cy + 2)
+    p.drawPath(path)
+    p.setBrush(disc)
+    p.drawEllipse(QRectF(cx - 2, cy + 5, 4, 4))
+
+
 def _draw_reboot_glyph(p: QPainter, cx: float, cy: float) -> None:
     """Draw a two-segment circular arrow suggesting a restart."""
-    from PySide6.QtCore import Qt as _Qt
-    from PySide6.QtGui import QPen
-
     radius = 14.0
     pen = QPen(QColor("#ffffff"), 4)
-    pen.setCapStyle(_Qt.PenCapStyle.RoundCap)
+    pen.setCapStyle(Qt.PenCapStyle.RoundCap)
     p.setPen(pen)
     rect = QRectF(cx - radius, cy - radius, radius * 2, radius * 2)
     p.drawArc(rect, 30 * 16, 120 * 16)
     p.drawArc(rect, 210 * 16, 120 * 16)
 
     # Arrowheads at each arc end.
-    p.setPen(_Qt.PenStyle.NoPen)
+    p.setPen(Qt.PenStyle.NoPen)
     head_a = QPolygonF(
         [
             QPointF(cx + radius * 0.87, cy - radius * 0.5),

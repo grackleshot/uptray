@@ -7,11 +7,13 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QTextCursor
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QFontDatabase, QTextCursor
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QComboBox,
     QDialog,
+    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -20,6 +22,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QStackedWidget,
@@ -42,6 +45,8 @@ from topgrade_update.core.topgrade_session import (
     build_diagnose_prompt,
     list_run_logs,
 )
+from topgrade_update.gui.icons import status_pixmap
+from topgrade_update.gui.style import apply_theme, colors, set_danger, set_primary
 from topgrade_update.gui.terminal_widget import TerminalWidget, webengine_available
 
 if TYPE_CHECKING:
@@ -51,13 +56,23 @@ if TYPE_CHECKING:
 
 _log = get_logger("run_window")
 
-_STATUS_LABEL = {
-    "pending": "…",
-    "running": "▶",
-    "succeeded": "✓",
-    "failed": "✗",
-    "skipped": "–",
+# status -> (icon kind, human word shown next to the step name)
+_STEP_STATUS: dict[str, tuple[str, str]] = {
+    "pending": ("pending", "Waiting"),
+    "running": ("running", "Running…"),
+    "succeeded": ("done", "Done"),
+    "failed": ("failed", "Failed"),
+    "skipped": ("skipped", "Skipped"),
 }
+
+
+def _format_elapsed(seconds: int) -> str:
+    """Render seconds as H:MM:SS or M:SS for the header."""
+    minutes, secs = divmod(max(0, seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
 
 
 class RunWindow(QMainWindow):
@@ -78,6 +93,7 @@ class RunWindow(QMainWindow):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
+        apply_theme(self)
         self._cfg = cfg
         self._extra_args = list(extra_args or [])
         self._command_override = command
@@ -86,41 +102,89 @@ class RunWindow(QMainWindow):
         self._agent_session: TopgradeSession | None = None
         self._steps: dict[str, StepEvent] = {}
         self._step_order: list[str] = []
+        self._step_items: dict[str, QListWidgetItem] = {}
         self._current_step: str | None = None
         self._failed_step: str | None = None
         self._returncode: int | None = None
         self._log_path: Path | None = None
         self._elapsed = 0
         self._retry_visible = False
+        self._activity_line = ""
 
         self.setWindowTitle(title or "Topgrade Update — Run")
-        self.setMinimumSize(780, 520)
+        self.setMinimumSize(840, 560)
         self.session_event.connect(self._on_session_event)
         self.agent_event.connect(self._on_agent_event)
 
+        tokens = colors()
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
+        layout.setContentsMargins(16, 14, 16, 12)
+        layout.setSpacing(10)
 
+        # --- Header: live status + mode + actions -----------------------
         header = QHBoxLayout()
-        self._state_label = QLabel("Starting…")
-        self._elapsed_label = QLabel("0s")
-        header.addWidget(self._state_label)
-        header.addWidget(self._elapsed_label)
-        header.addStretch()
+        header.setSpacing(12)
+        self._state_icon = QLabel()
+        self._state_icon.setPixmap(status_pixmap("running", 36))
+        header.addWidget(self._state_icon, 0, Qt.AlignmentFlag.AlignTop)
+
+        state_box = QVBoxLayout()
+        state_box.setSpacing(1)
+        self._state_label = QLabel("Getting ready…")
+        state_font = self._state_label.font()
+        state_font.setPointSizeF(state_font.pointSizeF() + 4)
+        state_font.setBold(True)
+        self._state_label.setFont(state_font)
+        self._subtitle_label = QLabel(
+            f'<span style="color:{tokens["muted"]}">Starting topgrade…</span>'
+        )
+        self._subtitle_label.setWordWrap(True)
+        state_box.addWidget(self._state_label)
+        state_box.addWidget(self._subtitle_label)
+        header.addLayout(state_box, 1)
 
         self._mode_simple = QPushButton("Simple")
         self._mode_simple.setCheckable(True)
         self._mode_verbose = QPushButton("Verbose")
         self._mode_verbose.setCheckable(True)
+        self._mode_group = QButtonGroup(self)
+        self._mode_group.setExclusive(True)
+        self._mode_group.addButton(self._mode_simple)
+        self._mode_group.addButton(self._mode_verbose)
         self._mode_simple.clicked.connect(lambda: self._set_mode("simple"))
         self._mode_verbose.clicked.connect(lambda: self._set_mode("verbose"))
-        header.addWidget(self._mode_simple)
-        header.addWidget(self._mode_verbose)
+        mode_frame = QFrame()
+        mode_frame.setStyleSheet(
+            f"QFrame {{"
+            f" background: {tokens['card']};"
+            f" border: 1px solid {tokens['border']};"
+            f" border-radius: 8px; }}"
+            f"QFrame QPushButton {{ background: transparent; border: none;"
+            f" color: {tokens['muted']}; padding: 5px 16px; border-radius: 6px; }}"
+            f"QFrame QPushButton:checked {{"
+            f" background: {tokens['accent']};"
+            f" color: {tokens['accent_text']};"
+            f" font-weight: 600; }}"
+            f"QFrame QPushButton:hover:!checked {{"
+            f" color: {tokens['text']}; }}"
+        )
+        mode_layout = QHBoxLayout(mode_frame)
+        mode_layout.setContentsMargins(3, 3, 3, 3)
+        mode_layout.setSpacing(2)
+        mode_layout.addWidget(self._mode_simple)
+        mode_layout.addWidget(self._mode_verbose)
+        mode_frame.setToolTip(
+            "Simple: friendly progress anyone can follow.\n"
+            "Verbose: full terminal output with every detail."
+        )
+        header.addWidget(mode_frame)
 
         self._btn_review = QPushButton("Review log")
         self._btn_review.clicked.connect(self._review_log)
         self._btn_cancel = QPushButton("Cancel")
+        set_danger(self._btn_cancel)
         self._btn_cancel.clicked.connect(self._cancel)
         self._btn_diagnose = QPushButton("Diagnose")
         self._btn_diagnose.clicked.connect(self._toggle_diagnose)
@@ -129,11 +193,87 @@ class RunWindow(QMainWindow):
         header.addWidget(self._btn_cancel)
         layout.addLayout(header)
 
-        self._retry_bar = QWidget()
+        # Progress bar directly under the header.
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)  # busy pulse until steps are known
+        self._progress.setTextVisible(False)
+        self._progress.setFixedHeight(8)
+        layout.addWidget(self._progress)
+
+        # --- Body: step checklist + Simple/Verbose stack -----------------
+        body = QSplitter(Qt.Orientation.Horizontal)
+        self._step_list = QListWidget()
+        self._step_list.setMinimumWidth(230)
+        self._step_list.setIconSize(QSize(18, 18))
+        body.addWidget(self._step_list)
+
+        self._stack = QStackedWidget()
+
+        simple_page = QWidget()
+        simple_layout = QVBoxLayout(simple_page)
+        simple_layout.setContentsMargins(24, 32, 24, 24)
+        simple_layout.setSpacing(10)
+        simple_layout.addStretch(2)
+        self._big_icon = QLabel()
+        self._big_icon.setPixmap(status_pixmap("running", 56))
+        self._big_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        simple_layout.addWidget(self._big_icon)
+        self._big_title = QLabel("Updating your computer…")
+        big_font = self._big_title.font()
+        big_font.setPointSizeF(big_font.pointSizeF() + 7)
+        big_font.setBold(True)
+        self._big_title.setFont(big_font)
+        self._big_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        simple_layout.addWidget(self._big_title)
+        self._big_subtitle = QLabel(
+            f'<span style="color:{tokens["muted"]}">'
+            "This may take a few minutes. You can keep working."
+            "</span>"
+        )
+        self._big_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        simple_layout.addWidget(self._big_subtitle)
+        simple_layout.addSpacing(8)
+        self._activity_label = QLabel("")
+        self._activity_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
+        self._activity_label.setStyleSheet(
+            f"color: {tokens['muted']};"
+            f" font-family: '{mono}';"
+        )
+        simple_layout.addWidget(self._activity_label)
+        simple_layout.addStretch(3)
+        self._stack.addWidget(simple_page)
+
+        self._term = TerminalWidget()
+        self._term.input_ready.connect(self._pty_write)
+        self._term.set_resize_handler(self._on_term_resize)
+        self._stack.addWidget(self._term)
+        body.addWidget(self._stack)
+        body.setStretchFactor(1, 1)
+        body.setSizes([260, 580])
+        layout.addWidget(body, 1)
+
+        # --- Retry prompt strip ------------------------------------------
+        self._retry_bar = QFrame()
+        self._retry_bar.setStyleSheet(
+            f"QFrame {{ background: {tokens['warning_bg']};"
+            f" border: 1px solid {tokens['warning']}; border-radius: 8px; }}"
+            "QLabel { background: transparent; border: none; }"
+            "QPushButton { background: transparent; }"
+        )
         retry_layout = QHBoxLayout(self._retry_bar)
-        retry_layout.setContentsMargins(0, 0, 0, 0)
-        retry_layout.addWidget(QLabel("Retry failed step?"))
-        for label, key in (("Yes", "y"), ("No", "n"), ("Shell", "s"), ("Quit", "q")):
+        retry_layout.setContentsMargins(12, 8, 12, 8)
+        retry_layout.setSpacing(8)
+        retry_icon = QLabel()
+        retry_icon.setPixmap(status_pixmap("warning", 18))
+        retry_layout.addWidget(retry_icon)
+        retry_layout.addWidget(QLabel("<b>Topgrade asks:</b> retry the failed step?"))
+        for label, key in (
+            ("Yes, retry", "y"),
+            ("No, skip", "n"),
+            ("Open terminal", "s"),
+            ("Quit", "q"),
+        ):
             btn = QPushButton(label)
             btn.clicked.connect(lambda _checked=False, k=key: self._answer_retry(k))
             retry_layout.addWidget(btn)
@@ -141,28 +281,22 @@ class RunWindow(QMainWindow):
         self._retry_bar.hide()
         layout.addWidget(self._retry_bar)
 
-        body = QSplitter(Qt.Orientation.Horizontal)
-        self._step_list = QListWidget()
-        self._step_list.setMinimumWidth(180)
-        body.addWidget(self._step_list)
-
-        self._stack = QStackedWidget()
-        self._simple_pane = QTextEdit()
-        self._simple_pane.setReadOnly(True)
-        self._stack.addWidget(self._simple_pane)
-        self._term = TerminalWidget()
-        self._term.input_ready.connect(self._pty_write)
-        self._term.set_resize_handler(self._on_term_resize)
-        self._stack.addWidget(self._term)
-        body.addWidget(self._stack)
-        body.setStretchFactor(1, 1)
-        layout.addWidget(body, 1)
-
-        self._diagnose = QWidget()
+        # --- Diagnose drawer ---------------------------------------------
+        self._diagnose = QFrame()
+        self._diagnose.setStyleSheet(
+            f"QFrame {{ background: {tokens['card']};"
+            f" border: 1px solid {tokens['border']}; border-radius: 10px; }}"
+            "QLabel { background: transparent; border: none; }"
+        )
         diag_layout = QVBoxLayout(self._diagnose)
-        diag_layout.setContentsMargins(0, 0, 0, 0)
+        diag_layout.setContentsMargins(12, 10, 12, 12)
+        diag_layout.setSpacing(8)
         picker = QHBoxLayout()
-        picker.addWidget(QLabel("Agent"))
+        picker.setSpacing(8)
+        diag_title = QLabel("<b>Diagnose the failure</b>")
+        picker.addWidget(diag_title)
+        picker.addStretch()
+        picker.addWidget(QLabel(f'<span style="color:{tokens["muted"]}">Agent</span>'))
         self._agent_combo = QComboBox()
         for name in available_agents():
             self._agent_combo.addItem(name)
@@ -178,7 +312,6 @@ class RunWindow(QMainWindow):
             open_term = QPushButton("Open in terminal")
             open_term.clicked.connect(self._open_agent_external)
             picker.addWidget(open_term)
-        picker.addStretch()
         diag_layout.addLayout(picker)
         self._agent_term = TerminalWidget()
         self._agent_term.input_ready.connect(self._agent_write)
@@ -221,7 +354,9 @@ class RunWindow(QMainWindow):
                 QMessageBox.warning(
                     self, "Topgrade not found", "Install topgrade before trying to run it."
                 )
-                self._state_label.setText("Topgrade missing")
+                self._set_state(
+                    "failed", "Topgrade is missing", "Install topgrade, then try again."
+                )
                 self._btn_cancel.setEnabled(False)
                 return
             command = [topgrade, *self._extra_args]
@@ -231,17 +366,68 @@ class RunWindow(QMainWindow):
             on_event=self.session_event.emit,
         )
         self._log_path = self._session.log_path
-        self._state_label.setText("Running")
+        self._set_state("running", "Updating your computer…", "Starting topgrade…")
         self._timer.start(1000)
         try:
             self._session.start()
         except OSError as exc:
-            self._state_label.setText(f"Failed to start: {exc}")
+            self._set_state("failed", "Could not start", str(exc))
             self._btn_cancel.setEnabled(False)
 
     def _tick(self) -> None:
         self._elapsed += 1
-        self._elapsed_label.setText(f"{self._elapsed}s")
+        self._refresh_subtitle()
+
+    # ------------------------------------------------------------------
+    # Header / Simple-pane state
+
+    def _set_state(self, kind: str, title: str, subtitle_html: str) -> None:
+        """Update the header and Simple-pane hero for a run state."""
+        tokens = colors()
+        self._state_icon.setPixmap(status_pixmap(kind, 36))
+        self._state_label.setText(title)
+        self._big_icon.setPixmap(status_pixmap(kind, 56))
+        self._big_title.setText(title)
+        self._subtitle_label.setText(
+            f'<span style="color:{tokens["muted"]}">{subtitle_html}</span>'
+        )
+        self._big_subtitle.setText(
+            f'<span style="color:{tokens["muted"]}">{subtitle_html}</span>'
+        )
+
+    def _step_progress(self) -> tuple[int, int]:
+        """Return (finished steps, total known steps)."""
+        finished = sum(
+            1
+            for step in self._steps.values()
+            if step.status in {"succeeded", "failed", "skipped"}
+        )
+        return finished, len(self._step_order)
+
+    def _refresh_subtitle(self) -> None:
+        """Rebuild the live subtitle: step counter, current step, elapsed."""
+        if self._returncode is not None:
+            return
+        finished, total = self._step_progress()
+        parts: list[str] = []
+        if total:
+            parts.append(f"Step {min(finished + 1, total)} of {total}")
+        if self._current_step:
+            parts.append(self._current_step)
+        parts.append(_format_elapsed(self._elapsed))
+        self._set_state("running", "Updating your computer…", " · ".join(parts))
+
+    def _refresh_progress(self) -> None:
+        finished, total = self._step_progress()
+        if total == 0:
+            if self._returncode is None:
+                self._progress.setRange(0, 0)  # busy pulse
+            return
+        self._progress.setRange(0, 100)
+        self._progress.setValue(int(finished * 100 / total))
+
+    # ------------------------------------------------------------------
+    # Session events
 
     def _on_session_event(self, event: object) -> None:
         if isinstance(event, OutputChunk):
@@ -272,15 +458,35 @@ class RunWindow(QMainWindow):
             self._btn_diagnose.setDefault(True)
         self._refresh_steps()
         if event.latest_line:
-            self._simple_pane.append(event.latest_line)
+            self._activity_line = event.latest_line
+            shown = self._activity_line if len(self._activity_line) <= 120 else (
+                self._activity_line[:117] + "…"
+            )
+            self._activity_label.setText(shown)
+        if event.status in {"succeeded", "failed", "skipped"} and (
+            self._current_step == event.name
+        ):
+            self._current_step = None
+        self._refresh_progress()
+        self._refresh_subtitle()
 
     def _refresh_steps(self) -> None:
-        self._step_list.clear()
         for name in self._step_order:
             step = self._steps[name]
-            marker = _STATUS_LABEL.get(step.status, "?")
-            item = QListWidgetItem(f"{marker}  {name}")
-            self._step_list.addItem(item)
+            icon_kind, word = _STEP_STATUS.get(step.status, ("pending", "…"))
+            item = self._step_items.get(name)
+            if item is None:
+                item = QListWidgetItem(f"{name} — {word}")
+                self._step_items[name] = item
+                self._step_list.addItem(item)
+                self._step_list.scrollToBottom()
+            else:
+                item.setText(f"{name} — {word}")
+            item.setIcon(status_pixmap(icon_kind, 16))
+            tooltip = f"{name}: {word}"
+            if step.latest_line:
+                tooltip = f"{tooltip}\n{step.latest_line}"
+            item.setToolTip(tooltip)
 
     def _handle_askpass(self, event: AskpassRequest) -> None:
         password, ok = QInputDialog.getText(
@@ -328,13 +534,34 @@ class RunWindow(QMainWindow):
         self._log_path = event.log_path
         self._failed_step = event.failed_step or self._failed_step
         self._retry_bar.hide()
+        self._btn_cancel.setText("Close")
+        # Cancel was marked destructive; as a plain Close it loses the role.
+        self._btn_cancel.setProperty("class", None)
+        self._btn_cancel.style().unpolish(self._btn_cancel)
+        self._btn_cancel.style().polish(self._btn_cancel)
+        elapsed = _format_elapsed(self._elapsed)
         if event.returncode == 0:
-            self._state_label.setText("Finished")
-            self._btn_cancel.setText("Close")
+            self._progress.setRange(0, 100)
+            self._progress.setValue(100)
+            self._set_state(
+                "done",
+                "All done!",
+                f"Up to date · finished in {elapsed}",
+            )
+            self._btn_cancel.setDefault(True)
+            set_primary(self._btn_cancel)
         else:
-            self._state_label.setText(f"Failed (exit {event.returncode})")
-            self._btn_cancel.setText("Close")
+            self._progress.setRange(0, 100)
+            finished, total = self._step_progress()
+            if total:
+                self._progress.setValue(int(finished * 100 / total))
+            failed = self._failed_step or self._current_step
+            detail = f"Exit code {event.returncode} · {elapsed}"
+            if failed:
+                detail = f"“{failed}” failed · {detail}"
+            self._set_state("failed", "Something went wrong", detail)
             self._btn_diagnose.setDefault(True)
+            set_primary(self._btn_diagnose)
         self.finished.emit(event.returncode)
         if self._on_finished is not None:
             self._on_finished(event.returncode)
@@ -435,9 +662,28 @@ class ReviewLogDialog(QDialog):
 
     def __init__(self, current: Path | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        apply_theme(self)
         self.setWindowTitle("Topgrade Update — Logs")
-        self.setMinimumSize(720, 440)
-        layout = QHBoxLayout(self)
+        self.setMinimumSize(760, 480)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(12)
+
+        tokens = colors()
+        title = QLabel("Run logs")
+        font = title.font()
+        font.setPointSizeF(font.pointSizeF() + 4)
+        font.setBold(True)
+        title.setFont(font)
+        layout.addWidget(title)
+        subtitle = QLabel(
+            f'<span style="color:{tokens["muted"]}">'
+            "Full transcripts of past update runs</span>"
+        )
+        layout.addWidget(subtitle)
+
+        body = QHBoxLayout()
+        body.setSpacing(12)
 
         self._list = QListWidget()
         logs = list_run_logs()
@@ -451,18 +697,26 @@ class ReviewLogDialog(QDialog):
                 label = f"● {label}"
             self._list.addItem(label)
         self._list.currentRowChanged.connect(self._show_row)
-        layout.addWidget(self._list, 1)
+        body.addWidget(self._list, 1)
 
         self._text = QTextEdit()
         self._text.setReadOnly(True)
-        self._text.setStyleSheet("font-family: monospace;")
-        layout.addWidget(self._text, 3)
+        self._text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        body.addWidget(self._text, 3)
+
+        layout.addLayout(body, 1)
 
         if logs:
             self._list.setCurrentRow(0)
         else:
             self._text.setPlainText("No run logs found.")
 
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.close)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
 
     def _show_row(self, row: int) -> None:
         if row < 0 or row >= len(self._paths):

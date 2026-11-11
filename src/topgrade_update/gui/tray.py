@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 from PySide6.QtCore import QFileSystemWatcher, QThread, QTimer, Signal
+from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
 
 from topgrade_update.core.arch_news import NewsItem, fetch_news, new_items, newest_marker
@@ -48,6 +49,7 @@ from topgrade_update.gui.dialog import (
 from topgrade_update.gui.icons import IconCache
 from topgrade_update.gui.run_window import RunWindow
 from topgrade_update.gui.settings import SettingsDialog
+from topgrade_update.gui.style import apply_app_theme, apply_theme
 from topgrade_update.gui.tray_logic import (
     OFFLINE_RETRY_MS,
     PACMAN_DEBOUNCE_MS,
@@ -263,15 +265,21 @@ class Tray(QSystemTrayIcon):
     # Menu construction
 
     def _build_menu(self) -> None:
+        apply_theme(self._menu)
         self._menu.clear()
         self._action_status = self._menu.addAction("Idle")
         self._action_status.setEnabled(False)
+        status_font = self._action_status.font()
+        status_font.setBold(True)
+        self._action_status.setFont(status_font)
         self._menu.addSeparator()
-        self._menu.addAction("Check Now", self._check_now)
-        self._menu.addAction("View Updates", self._show_updates)
+        self._add_action("Check Now", "view-refresh", self._check_now)
+        self._add_action("View Updates", "software-updates-available", self._show_updates)
         package_total = self._package_total()
         if package_total > 0:
-            self._menu.addAction("Preview Updates (Dry Run)", self._preview_topgrade)
+            self._add_action(
+                "Preview Updates (Dry Run)", "document-print-preview", self._preview_topgrade
+            )
             self._menu.addSeparator()
             for result in self._results:
                 if result.updates and result.source != "reboot":
@@ -282,12 +290,15 @@ class Tray(QSystemTrayIcon):
             self._add_news_menu()
 
         self._menu.addSeparator()
-        self._menu.addAction("Run Topgrade", self._run_topgrade)
-        self._menu.addAction("Run in terminal", self._run_topgrade_terminal)
+        run_action = self._add_action("Run Topgrade", "system-run", self._run_topgrade)
+        run_font = run_action.font()
+        run_font.setBold(True)
+        run_action.setFont(run_font)
+        self._add_action("Run in Terminal", "utilities-terminal", self._run_topgrade_terminal)
         self._menu.addSeparator()
-        self._menu.addAction("Update History…", self._show_history)
-        self._menu.addAction("Maintenance Check", self._check_maintenance)
-        self._menu.addAction("Settings…", self._open_settings)
+        self._add_action("Update History…", "document-open-recent", self._show_history)
+        self._add_action("Maintenance…", "user-trash", self._check_maintenance)
+        self._add_action("Settings…", "preferences-system", self._open_settings)
         self._menu.addSeparator()
         snooze_menu = self._menu.addMenu("Snooze")
         snooze_menu.addAction("Snooze 1 hour", lambda: self._snooze(1))
@@ -298,7 +309,15 @@ class Tray(QSystemTrayIcon):
         snooze_menu.addAction("Snooze until tomorrow", lambda: self._snooze(24))
         snooze_menu.addAction("Cancel snooze", lambda: self._snooze(None))
         self._menu.addSeparator()
-        self._menu.addAction("Quit", QApplication.quit)
+        self._add_action("Quit", "application-exit", QApplication.quit)
+
+    def _add_action(self, label: str, icon_name: str, slot: Callable[[], None]) -> QAction:
+        """Add a menu action with a themed icon when the platform provides one."""
+        action = QAction(label, self._menu)
+        action.setIcon(QIcon.fromTheme(icon_name))
+        action.triggered.connect(slot)
+        self._menu.addAction(action)
+        return action
 
     def _add_source_menu(self, result: CheckResult) -> None:
         submenu = self._menu.addMenu(f"{result.source} ({len(result.updates)})")
@@ -790,6 +809,7 @@ def run_tray(cfg: Config | None = None) -> int:
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName(APP_ID)
     app.setQuitOnLastWindowClosed(False)
+    apply_app_theme(app)
 
     if not QSystemTrayIcon.isSystemTrayAvailable():
         print("Error: No system tray available.", file=sys.stderr)

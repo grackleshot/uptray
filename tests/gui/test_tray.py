@@ -43,7 +43,7 @@ def test_tray_initialization(tray: Tray) -> None:
     assert "Check Now" in action_labels
     assert "View Updates" in action_labels
     assert "Run Topgrade" in action_labels
-    assert "Run in terminal" in action_labels
+    assert "Run in Terminal" in action_labels
     assert "Quit" in action_labels
 
 

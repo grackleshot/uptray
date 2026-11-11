@@ -71,3 +71,31 @@ None.
   - LICENSE file (MIT)
   - Test suite: 72 tests (up from 58)
   - Quality: ruff + mypy strict pass on all 25 source files
+
+## Session 2026-11-10: UI/UX redesign (top to bottom)
+
+- New `gui/style.py`: token-based theme (light+dark, palette-detected), global QSS,
+  `apply_theme`/`apply_app_theme`, `set_primary`/`set_danger` helpers. AA contrast;
+  dark-theme accent_text switched to dark ink on light-blue accent.
+- Tray icons (`gui/icons.py`): distinct glyph per state (idle=disc, checking=clock,
+  uptodate=check, updates=arrow+badge, reboot=restart) — readable without color.
+  Public `status_pixmap(kind, size)` shared by dialogs/run window.
+- UpdatesDialog: big title + per-source subtitle, reboot banner (not a fake package
+  row), package filter box, bold source groups, amber error rows ("⚠ " prefix,
+  format otherwise unchanged), "Update Now" primary, double-click hint. Reboot no
+  longer counted in header total.
+- RunWindow: Simple mode = big plain-language hero ("Updating your computer…" /
+  "All done!" / "Something went wrong"), step checklist with icon+word per status,
+  progress bar, single muted activity line. Verbose = full terminal + same checklist
+  sidebar. Segmented Simple/Verbose control, retry strip restyled, diagnose drawer
+  carded; Diagnose becomes primary on failure, Close on success. Elapsed as M:SS.
+- SettingsDialog: three cards (Checking / Running / Tray&&notifications), plain-
+  language source labels, helper captions under technical fields, "Save" primary.
+  Notif checkboxes flattened into form rows (nesting caused overlap).
+- HistoryDialog/MaintenanceDialog/ReviewLogDialog: themed headers, colored action
+  lines (HTML; pinned substrings survive toPlainText), fixed-font detail panes.
+- Tray menu: themed, icons via QIcon.fromTheme, "Run in Terminal" title case, bold
+  Run Topgrade + status row. run_tray applies app-wide theme.
+- Tests: label assertion updated to "Run in Terminal" (168 pass). ruff + mypy src clean.
+- Gotcha: QSS-in-Python needs f-strings with doubled braces on EVERY segment; mixed
+  plain/f-string concatenation silently emits `{{`.

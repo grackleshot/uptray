@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -14,11 +15,17 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
 from topgrade_update.core.models import Config, SourceConfig
+from topgrade_update.gui.style import apply_theme, colors, set_primary
+
+if TYPE_CHECKING:
+    from collections.abc import Mapping
 
 CLICK_ACTIONS = {"default": "Default (updates dialog or topgrade)",
                  "show_updates": "Show updates dialog",
@@ -26,39 +33,104 @@ CLICK_ACTIONS = {"default": "Default (updates dialog or topgrade)",
 ICON_STYLES = {"default": "Default", "colorblind": "Colorblind-safe"}
 RUN_MODES = {"simple": "Simple", "verbose": "Verbose"}
 
+# Plain-language descriptions for built-in update sources.
+_SOURCE_LABELS: Mapping[str, str] = {
+    "pacman": "Official Arch repositories (pacman)",
+    "aur": "AUR helpers (paru, yay, pikaur)",
+    "flatpak": "Flatpak apps & runtimes",
+    "firmware": "Device firmware (fwupdmgr)",
+    "reboot": "Reboot-required indicator",
+}
+
+
+def _caption(text: str) -> QLabel:
+    """Small muted helper text explaining the setting above it."""
+    muted = colors().get("muted", "#98a1ab")
+    label = QLabel(f'<span style="color:{muted}; font-size: 8.5pt;">{text}</span>')
+    label.setWordWrap(True)
+    return label
+
 
 class SettingsDialog(QDialog):
     """Edit the topgrade-update configuration without touching TOML."""
 
     def __init__(self, cfg: Config, parent: QDialog | None = None) -> None:
         super().__init__(parent)
+        apply_theme(self)
         self.setWindowTitle("Topgrade Update — Settings")
-        self.setMinimumWidth(480)
+        self.setMinimumWidth(540)
         self._cfg = cfg
         self._source_boxes: dict[str, QCheckBox] = {}
         self._custom_boxes: dict[str, QCheckBox] = {}
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 12)
+        root.setSpacing(10)
 
-        form = QFormLayout()
+        # --- Checking for updates ----------------------------------------
+        checking = QGroupBox("Checking for updates")
+        checking_form = QFormLayout(checking)
+        checking_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self._interval = QSpinBox()
         self._interval.setRange(300, 86400)
         self._interval.setSingleStep(300)
         self._interval.setSuffix(" s")
         self._interval.setValue(cfg.check_interval)
-        form.addRow("Check interval", self._interval)
+        checking_form.addRow("Check every", self._interval)
+        checking_form.addRow("", _caption("How often updates are looked for (5–1440 minutes)."))
 
         self._terminals = QLineEdit(", ".join(cfg.terminals))
         self._terminals.setPlaceholderText("konsole, alacritty, kitty")
-        form.addRow("Terminal priority", self._terminals)
+        checking_form.addRow("Terminal priority", self._terminals)
+        checking_form.addRow(
+            "", _caption("Terminals tried in order when topgrade opens in one.")
+        )
+
+        sources_row = QVBoxLayout()
+        sources_row.setSpacing(6)
+        for name in sorted(cfg.sources):
+            box = QCheckBox(_SOURCE_LABELS.get(name, name))
+            box.setChecked(cfg.sources[name].enabled)
+            self._source_boxes[name] = box
+            sources_row.addWidget(box)
+        for custom in cfg.custom_commands:
+            box = QCheckBox(f"custom: {custom.name}")
+            box.setChecked(custom.enabled)
+            self._custom_boxes[custom.name] = box
+            sources_row.addWidget(box)
+        sources_widget = QWidget()
+        sources_widget.setLayout(sources_row)
+        checking_form.addRow("Update sources", sources_widget)
+        checking_form.addRow(
+            "", _caption("Places to look for updates. Untick a source to skip it.")
+        )
+        root.addWidget(checking)
+
+        # --- Running updates ---------------------------------------------
+        running = QGroupBox("Running updates")
+        running_form = QFormLayout(running)
+        running_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self._run_mode = QComboBox()
         for value, label in RUN_MODES.items():
             self._run_mode.addItem(label, value)
         mode = cfg.run_mode if cfg.run_mode in RUN_MODES else "simple"
         self._run_mode.setCurrentIndex(max(0, list(RUN_MODES).index(mode)))
-        form.addRow("Update run mode", self._run_mode)
+        running_form.addRow("Run mode", self._run_mode)
+        running_form.addRow(
+            "",
+            _caption(
+                "Simple shows friendly step-by-step progress; "
+                "Verbose shows the full terminal output."
+            ),
+        )
+        root.addWidget(running)
+
+        # --- Tray & notifications ----------------------------------------
+        tray = QGroupBox("Tray && notifications")
+        tray_form = QFormLayout(tray)
+        tray_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self._click_action = QComboBox()
         for value, label in CLICK_ACTIONS.items():
@@ -66,13 +138,16 @@ class SettingsDialog(QDialog):
         self._click_action.setCurrentIndex(
             max(0, list(CLICK_ACTIONS).index(cfg.tray.click_action))
         )
-        form.addRow("Tray click action", self._click_action)
+        tray_form.addRow("Left-click on tray icon", self._click_action)
 
         self._snooze_hours = QSpinBox()
         self._snooze_hours.setRange(1, 24)
         self._snooze_hours.setSuffix(" h")
         self._snooze_hours.setValue(cfg.tray.snooze_hours)
-        form.addRow("Snooze duration", self._snooze_hours)
+        tray_form.addRow("Snooze duration", self._snooze_hours)
+        tray_form.addRow(
+            "", _caption("How long notifications stay silent after snoozing.")
+        )
 
         self._icon_style = QComboBox()
         for value, label in ICON_STYLES.items():
@@ -80,50 +155,35 @@ class SettingsDialog(QDialog):
         self._icon_style.setCurrentIndex(
             max(0, list(ICON_STYLES).index(cfg.tray.icon_style))
         )
-        form.addRow("Icon style", self._icon_style)
-
-        root.addLayout(form)
-
-        notifications = QGroupBox("Notifications")
-        notifications_layout = QVBoxLayout(notifications)
+        tray_form.addRow("Icon style", self._icon_style)
 
         self._notifications_enabled = QCheckBox("Enable desktop notifications")
         self._notifications_enabled.setChecked(cfg.notifications.enabled)
-        notifications_layout.addWidget(self._notifications_enabled)
-
+        tray_form.addRow("", self._notifications_enabled)
         self._notifications_sound = QCheckBox("Play notification sound")
         self._notifications_sound.setChecked(cfg.notifications.sound)
-        notifications_layout.addWidget(self._notifications_sound)
-
+        tray_form.addRow("", self._notifications_sound)
         quiet_row = QHBoxLayout()
-        quiet_row.addWidget(QLabel("Quiet hours"))
+        quiet_row.setSpacing(6)
         self._quiet_start = _hour_combo(cfg.notifications.quiet_hours_start)
         self._quiet_end = _hour_combo(cfg.notifications.quiet_hours_end)
         quiet_row.addWidget(self._quiet_start)
         quiet_row.addWidget(QLabel("to"))
         quiet_row.addWidget(self._quiet_end)
         quiet_row.addStretch()
-        notifications_layout.addLayout(quiet_row)
-
-        root.addWidget(notifications)
-
-        sources = QGroupBox("Update sources")
-        sources_layout = QVBoxLayout(sources)
-        for name in sorted(cfg.sources):
-            box = QCheckBox(name)
-            box.setChecked(cfg.sources[name].enabled)
-            self._source_boxes[name] = box
-            sources_layout.addWidget(box)
-        for custom in cfg.custom_commands:
-            box = QCheckBox(f"custom: {custom.name}")
-            box.setChecked(custom.enabled)
-            self._custom_boxes[custom.name] = box
-            sources_layout.addWidget(box)
-        root.addWidget(sources)
+        tray_form.addRow("Quiet hours", quiet_row)
+        tray_form.addRow(
+            "", _caption("During quiet hours, checks still run but nothing pops up.")
+        )
+        root.addWidget(tray)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
+        ok_button = QPushButton("Save")
+        ok_button.setDefault(True)
+        set_primary(ok_button)
+        buttons.addButton(ok_button, QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
