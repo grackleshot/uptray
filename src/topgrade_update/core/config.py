@@ -178,6 +178,13 @@ def _apply_environment_overrides(cfg: Config, environ: Mapping[str, str]) -> Con
     if icon_style_key in environ:
         tray["icon_style"] = environ[icon_style_key]
     cfg.tray = _merge_tray_config(tray)
+
+    run_mode_key = f"{prefix}RUN_MODE"
+    if run_mode_key in environ:
+        run_mode = environ[run_mode_key]
+        if run_mode not in {"simple", "verbose"}:
+            raise ValueError(f"{run_mode_key} must be simple or verbose")
+        cfg.run_mode = run_mode
     return cfg
 
 
@@ -245,6 +252,12 @@ def load_config(
             raise ValueError("terminals must be a list of non-empty command names")
         cfg.terminals = terminals
 
+    if "run_mode" in raw:
+        run_mode = raw["run_mode"]
+        if not isinstance(run_mode, str) or run_mode not in {"simple", "verbose"}:
+            raise ValueError("run_mode must be simple or verbose")
+        cfg.run_mode = run_mode
+
     if "sources" in raw:
         sources = raw["sources"]
         if not isinstance(sources, dict):
@@ -281,6 +294,20 @@ def load_config(
     return _apply_environment_overrides(cfg, os.environ if environ is None else environ)
 
 
+def save_run_mode(mode: str, path: Path | None = None) -> Config:
+    """Persist only ``run_mode``, preserving any newer on-disk settings.
+
+    Reloads the current config file before writing so a stale in-memory Config
+    (e.g. from an open run window) cannot overwrite tray/settings changes.
+    """
+    if mode not in {"simple", "verbose"}:
+        raise ValueError("run_mode must be simple or verbose")
+    cfg = load_config(path, environ={})
+    cfg.run_mode = mode
+    save_config(cfg, path)
+    return cfg
+
+
 def save_config(cfg: Config, path: Path | None = None) -> None:
     """Save configuration to TOML file.
 
@@ -296,6 +323,7 @@ def save_config(cfg: Config, path: Path | None = None) -> None:
     lines: list[str] = [
         f"check_interval = {cfg.check_interval}",
         f"terminals = {json.dumps(cfg.terminals, ensure_ascii=False)}",
+        f"run_mode = {json.dumps(cfg.run_mode, ensure_ascii=False)}",
         "",
         "[notifications]",
         f"enabled = {str(cfg.notifications.enabled).lower()}",

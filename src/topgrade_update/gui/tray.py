@@ -46,6 +46,7 @@ from topgrade_update.gui.dialog import (
     open_url,
 )
 from topgrade_update.gui.icons import IconCache
+from topgrade_update.gui.run_window import RunWindow
 from topgrade_update.gui.settings import SettingsDialog
 from topgrade_update.gui.tray_logic import (
     OFFLINE_RETRY_MS,
@@ -282,6 +283,7 @@ class Tray(QSystemTrayIcon):
 
         self._menu.addSeparator()
         self._menu.addAction("Run Topgrade", self._run_topgrade)
+        self._menu.addAction("Run in terminal", self._run_topgrade_terminal)
         self._menu.addSeparator()
         self._menu.addAction("Update History…", self._show_history)
         self._menu.addAction("Maintenance Check", self._check_maintenance)
@@ -304,14 +306,18 @@ class Tray(QSystemTrayIcon):
             branch = f" ({update.branch})" if update.branch else ""
             submenu.addAction(
                 f"{update.name}{branch}",
-                lambda checked=False, name=update.name, source=result.source: open_url(
-                    upstream_url(name, source)
-                ),
+                self._package_opener(update.name, result.source),
             )
         hidden = len(result.updates) - _MAX_MENU_PACKAGES
         if hidden > 0:
             more = submenu.addAction(f"…and {hidden} more")
             more.setEnabled(False)
+
+    def _package_opener(self, name: str, source: str) -> Callable[[], None]:
+        def _open() -> None:
+            open_url(upstream_url(name, source))
+
+        return _open
 
     def _add_news_menu(self) -> None:
         label = "Arch News"
@@ -320,12 +326,15 @@ class Tray(QSystemTrayIcon):
         news_menu = self._menu.addMenu(label)
         for item in self._news_items[:_MAX_NEWS_ITEMS]:
             prefix = "[NEW] " if self._is_news_new(item) else ""
-            news_menu.addAction(
-                f"{prefix}{item.title}",
-                lambda checked=False, news=item: self._open_news_item(news),
-            )
+            news_menu.addAction(f"{prefix}{item.title}", self._news_opener(item))
         news_menu.addSeparator()
         news_menu.addAction("Mark all news as read", self._mark_news_read)
+
+    def _news_opener(self, item: NewsItem) -> Callable[[], None]:
+        def _open() -> None:
+            self._open_news_item(item)
+
+        return _open
 
     # ------------------------------------------------------------------
     # Aggregation helpers
@@ -686,6 +695,11 @@ class Tray(QSystemTrayIcon):
             send_message("No maintenance needed", "Your system looks clean.")
 
     def _open_settings(self) -> None:
+        # Reload so a run-window mode toggle (or other writer) is not overwritten.
+        try:
+            self._cfg = load_config()
+        except (OSError, ValueError) as exc:
+            get_logger("tray").warning("Could not reload configuration: %s", exc)
         dialog = SettingsDialog(self._cfg)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._apply_config(dialog.get_config())
@@ -709,10 +723,38 @@ class Tray(QSystemTrayIcon):
         self._update_tooltip()
 
     def _run_topgrade(self, extra_args: list[str] | None = None) -> None:
-        launch_topgrade_in_terminal(self._cfg, extra_args)
+        self._open_run_window(list(extra_args or []))
 
     def _preview_topgrade(self) -> None:
-        launch_topgrade_in_terminal(self._cfg, ["--dry-run"])
+        self._open_run_window(["--dry-run"], title="Topgrade Update — Dry Run")
+
+    def _run_topgrade_terminal(self) -> None:
+        launch_topgrade_in_terminal(self._cfg)
+
+    def _open_run_window(
+        self,
+        extra_args: list[str] | None = None,
+        *,
+        title: str | None = None,
+    ) -> None:
+        # Keep a strong reference so the non-modal window is not garbage-collected.
+        # Reuse only while a session is still running; finished windows must not
+        # block a new dry-run/update request.
+        existing = getattr(self, "_run_window", None)
+        if existing is not None and existing.isVisible() and existing.is_active:
+            existing.raise_()
+            existing.activateWindow()
+            return
+        if existing is not None:
+            existing.close()
+        window = RunWindow(
+            self._cfg,
+            extra_args=extra_args,
+            title=title,
+            on_finished=lambda _code: QTimer.singleShot(500, self._start_check),
+        )
+        self._run_window = window
+        window.show()
 
     def shutdown(self) -> None:
         """Release background threads and the notification DBus connection."""

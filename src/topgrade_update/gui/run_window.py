@@ -1,0 +1,475 @@
+"""In-app topgrade run window: Simple/Verbose views, logs, and diagnose agents."""
+
+from __future__ import annotations
+
+import shutil
+from datetime import datetime
+from pathlib import Path
+from typing import TYPE_CHECKING
+
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QCloseEvent, QTextCursor
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSplitter,
+    QStackedWidget,
+    QTextEdit,
+    QVBoxLayout,
+    QWidget,
+)
+
+from topgrade_update.core.config import save_run_mode
+from topgrade_update.core.logging import get_logger
+from topgrade_update.core.topgrade_session import (
+    AskpassRequest,
+    OutputChunk,
+    RetryPrompt,
+    SessionFinished,
+    StepEvent,
+    TopgradeSession,
+    available_agents,
+    build_agent_command,
+    build_diagnose_prompt,
+    list_run_logs,
+)
+from topgrade_update.gui.terminal_widget import TerminalWidget, webengine_available
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+
+    from topgrade_update.core.models import Config
+
+_log = get_logger("run_window")
+
+_STATUS_LABEL = {
+    "pending": "…",
+    "running": "▶",
+    "succeeded": "✓",
+    "failed": "✗",
+    "skipped": "–",
+}
+
+
+class RunWindow(QMainWindow):
+    """Non-modal window that hosts a live topgrade (or diagnose) session."""
+
+    finished = Signal(int)
+    session_event = Signal(object)
+    agent_event = Signal(object)
+
+    def __init__(
+        self,
+        cfg: Config,
+        *,
+        extra_args: list[str] | None = None,
+        command: list[str] | None = None,
+        title: str | None = None,
+        on_finished: Callable[[int], None] | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._cfg = cfg
+        self._extra_args = list(extra_args or [])
+        self._command_override = command
+        self._on_finished = on_finished
+        self._session: TopgradeSession | None = None
+        self._agent_session: TopgradeSession | None = None
+        self._steps: dict[str, StepEvent] = {}
+        self._step_order: list[str] = []
+        self._current_step: str | None = None
+        self._failed_step: str | None = None
+        self._returncode: int | None = None
+        self._log_path: Path | None = None
+        self._elapsed = 0
+        self._retry_visible = False
+
+        self.setWindowTitle(title or "Topgrade Update — Run")
+        self.setMinimumSize(780, 520)
+        self.session_event.connect(self._on_session_event)
+        self.agent_event.connect(self._on_agent_event)
+
+        root = QWidget()
+        self.setCentralWidget(root)
+        layout = QVBoxLayout(root)
+
+        header = QHBoxLayout()
+        self._state_label = QLabel("Starting…")
+        self._elapsed_label = QLabel("0s")
+        header.addWidget(self._state_label)
+        header.addWidget(self._elapsed_label)
+        header.addStretch()
+
+        self._mode_simple = QPushButton("Simple")
+        self._mode_simple.setCheckable(True)
+        self._mode_verbose = QPushButton("Verbose")
+        self._mode_verbose.setCheckable(True)
+        self._mode_simple.clicked.connect(lambda: self._set_mode("simple"))
+        self._mode_verbose.clicked.connect(lambda: self._set_mode("verbose"))
+        header.addWidget(self._mode_simple)
+        header.addWidget(self._mode_verbose)
+
+        self._btn_review = QPushButton("Review log")
+        self._btn_review.clicked.connect(self._review_log)
+        self._btn_cancel = QPushButton("Cancel")
+        self._btn_cancel.clicked.connect(self._cancel)
+        self._btn_diagnose = QPushButton("Diagnose")
+        self._btn_diagnose.clicked.connect(self._toggle_diagnose)
+        header.addWidget(self._btn_review)
+        header.addWidget(self._btn_diagnose)
+        header.addWidget(self._btn_cancel)
+        layout.addLayout(header)
+
+        self._retry_bar = QWidget()
+        retry_layout = QHBoxLayout(self._retry_bar)
+        retry_layout.setContentsMargins(0, 0, 0, 0)
+        retry_layout.addWidget(QLabel("Retry failed step?"))
+        for label, key in (("Yes", "y"), ("No", "n"), ("Shell", "s"), ("Quit", "q")):
+            btn = QPushButton(label)
+            btn.clicked.connect(lambda _checked=False, k=key: self._answer_retry(k))
+            retry_layout.addWidget(btn)
+        retry_layout.addStretch()
+        self._retry_bar.hide()
+        layout.addWidget(self._retry_bar)
+
+        body = QSplitter(Qt.Orientation.Horizontal)
+        self._step_list = QListWidget()
+        self._step_list.setMinimumWidth(180)
+        body.addWidget(self._step_list)
+
+        self._stack = QStackedWidget()
+        self._simple_pane = QTextEdit()
+        self._simple_pane.setReadOnly(True)
+        self._stack.addWidget(self._simple_pane)
+        self._term = TerminalWidget()
+        self._term.input_ready.connect(self._pty_write)
+        self._term.set_resize_handler(self._on_term_resize)
+        self._stack.addWidget(self._term)
+        body.addWidget(self._stack)
+        body.setStretchFactor(1, 1)
+        layout.addWidget(body, 1)
+
+        self._diagnose = QWidget()
+        diag_layout = QVBoxLayout(self._diagnose)
+        diag_layout.setContentsMargins(0, 0, 0, 0)
+        picker = QHBoxLayout()
+        picker.addWidget(QLabel("Agent"))
+        self._agent_combo = QComboBox()
+        for name in available_agents():
+            self._agent_combo.addItem(name)
+        picker.addWidget(self._agent_combo)
+        self._btn_start_agent = QPushButton("Start session")
+        self._btn_start_agent.clicked.connect(self._start_agent)
+        self._btn_end_agent = QPushButton("End session")
+        self._btn_end_agent.clicked.connect(self._end_agent)
+        self._btn_end_agent.setEnabled(False)
+        picker.addWidget(self._btn_start_agent)
+        picker.addWidget(self._btn_end_agent)
+        if not webengine_available():
+            open_term = QPushButton("Open in terminal")
+            open_term.clicked.connect(self._open_agent_external)
+            picker.addWidget(open_term)
+        picker.addStretch()
+        diag_layout.addLayout(picker)
+        self._agent_term = TerminalWidget()
+        self._agent_term.input_ready.connect(self._agent_write)
+        self._agent_term.set_resize_handler(self._on_agent_resize)
+        diag_layout.addWidget(self._agent_term)
+        self._diagnose.hide()
+        layout.addWidget(self._diagnose)
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._set_mode(cfg.run_mode if cfg.run_mode in {"simple", "verbose"} else "simple")
+        QTimer.singleShot(0, self._start)
+
+    @property
+    def is_active(self) -> bool:
+        """True while the topgrade session is still running."""
+        return self._session is not None and self._session.running
+
+    def _set_mode(self, mode: str) -> None:
+        simple = mode != "verbose"
+        self._mode_simple.setChecked(simple)
+        self._mode_verbose.setChecked(not simple)
+        self._stack.setCurrentIndex(0 if simple else 1)
+        if self._cfg.run_mode != mode:
+            self._cfg.run_mode = mode
+            try:
+                # Reload-from-disk so we do not clobber newer tray settings.
+                self._cfg = save_run_mode(mode)
+            except (OSError, ValueError) as exc:
+                _log.warning("Could not save run_mode: %s", exc)
+        if not simple:
+            self._term.focus_terminal()
+
+    def _start(self) -> None:
+        if self._command_override is not None:
+            command = list(self._command_override)
+        else:
+            topgrade = shutil.which("topgrade")
+            if topgrade is None:
+                QMessageBox.warning(
+                    self, "Topgrade not found", "Install topgrade before trying to run it."
+                )
+                self._state_label.setText("Topgrade missing")
+                self._btn_cancel.setEnabled(False)
+                return
+            command = [topgrade, *self._extra_args]
+
+        self._session = TopgradeSession(
+            command,
+            on_event=self.session_event.emit,
+        )
+        self._log_path = self._session.log_path
+        self._state_label.setText("Running")
+        self._timer.start(1000)
+        try:
+            self._session.start()
+        except OSError as exc:
+            self._state_label.setText(f"Failed to start: {exc}")
+            self._btn_cancel.setEnabled(False)
+
+    def _tick(self) -> None:
+        self._elapsed += 1
+        self._elapsed_label.setText(f"{self._elapsed}s")
+
+    def _on_session_event(self, event: object) -> None:
+        if isinstance(event, OutputChunk):
+            self._term.write(event.text)
+            return
+        if isinstance(event, StepEvent):
+            self._apply_step(event)
+            return
+        if isinstance(event, RetryPrompt):
+            self._retry_bar.show()
+            self._retry_visible = True
+            self._btn_diagnose.setDefault(False)
+            return
+        if isinstance(event, AskpassRequest):
+            self._handle_askpass(event)
+            return
+        if isinstance(event, SessionFinished):
+            self._finish(event)
+
+    def _apply_step(self, event: StepEvent) -> None:
+        if event.name not in self._steps:
+            self._step_order.append(event.name)
+        self._steps[event.name] = event
+        if event.status == "running":
+            self._current_step = event.name
+        if event.status == "failed":
+            self._failed_step = event.name
+            self._btn_diagnose.setDefault(True)
+        self._refresh_steps()
+        if event.latest_line:
+            self._simple_pane.append(event.latest_line)
+
+    def _refresh_steps(self) -> None:
+        self._step_list.clear()
+        for name in self._step_order:
+            step = self._steps[name]
+            marker = _STATUS_LABEL.get(step.status, "?")
+            item = QListWidgetItem(f"{marker}  {name}")
+            self._step_list.addItem(item)
+
+    def _handle_askpass(self, event: AskpassRequest) -> None:
+        password, ok = QInputDialog.getText(
+            self,
+            "Authentication required",
+            event.prompt,
+            QLineEdit.EchoMode.Password,
+        )
+        if self._session is not None:
+            self._session.reply_askpass(event.request_id, password if ok else None)
+
+    def _answer_retry(self, key: str) -> None:
+        self._retry_bar.hide()
+        self._retry_visible = False
+        if key == "s":
+            self._set_mode("verbose")
+        self._pty_write(f"{key}\n")
+
+    def _pty_write(self, data: str) -> None:
+        if self._session is not None:
+            self._session.write(data)
+
+    def _on_term_resize(self, rows: int, cols: int) -> None:
+        if self._session is not None:
+            self._session.resize(rows, cols)
+
+    def _agent_write(self, data: str) -> None:
+        if self._agent_session is not None:
+            self._agent_session.write(data)
+
+    def _on_agent_resize(self, rows: int, cols: int) -> None:
+        if self._agent_session is not None:
+            self._agent_session.resize(rows, cols)
+
+    def _cancel(self) -> None:
+        if self._session is not None and self._session.running:
+            self._state_label.setText("Cancelling…")
+            self._session.cancel()
+        else:
+            self.close()
+
+    def _finish(self, event: SessionFinished) -> None:
+        self._timer.stop()
+        self._returncode = event.returncode
+        self._log_path = event.log_path
+        self._failed_step = event.failed_step or self._failed_step
+        self._retry_bar.hide()
+        if event.returncode == 0:
+            self._state_label.setText("Finished")
+            self._btn_cancel.setText("Close")
+        else:
+            self._state_label.setText(f"Failed (exit {event.returncode})")
+            self._btn_cancel.setText("Close")
+            self._btn_diagnose.setDefault(True)
+        self.finished.emit(event.returncode)
+        if self._on_finished is not None:
+            self._on_finished(event.returncode)
+
+    def _review_log(self) -> None:
+        ReviewLogDialog(current=self._log_path, parent=self).exec()
+
+    def _toggle_diagnose(self) -> None:
+        self._diagnose.setVisible(not self._diagnose.isVisible())
+
+    def _start_agent(self) -> None:
+        if self._agent_combo.count() == 0:
+            QMessageBox.information(
+                self, "No agents", "Install claude, codex, or pi to diagnose failures."
+            )
+            return
+        agent = self._agent_combo.currentText()
+        prompt = build_diagnose_prompt(
+            returncode=self._returncode,
+            failed_step=self._failed_step or self._current_step,
+            log_path=self._log_path or Path("."),
+        )
+        try:
+            command = build_agent_command(agent, prompt)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Agent error", str(exc))
+            return
+        self._end_agent()
+        self._agent_term.clear()
+        self._agent_session = TopgradeSession(
+            command,
+            cwd=Path.home(),
+            enable_askpass=False,
+            on_event=self.agent_event.emit,
+        )
+        try:
+            self._agent_session.start()
+        except OSError as exc:
+            QMessageBox.warning(self, "Could not start agent", str(exc))
+            self._agent_session = None
+            return
+        self._btn_start_agent.setEnabled(False)
+        self._btn_end_agent.setEnabled(True)
+        self._agent_term.focus_terminal()
+
+    def _on_agent_event(self, event: object) -> None:
+        # Marshal to GUI thread via the same signal pattern used for topgrade.
+        if isinstance(event, OutputChunk):
+            self._agent_term.write(event.text)
+        elif isinstance(event, SessionFinished):
+            self._btn_start_agent.setEnabled(True)
+            self._btn_end_agent.setEnabled(False)
+
+    def _end_agent(self) -> None:
+        if self._agent_session is None:
+            return
+        self._agent_session.cancel()
+        self._agent_session.close()
+        self._agent_session = None
+        self._btn_start_agent.setEnabled(True)
+        self._btn_end_agent.setEnabled(False)
+
+    def _open_agent_external(self) -> None:
+        import subprocess
+
+        from topgrade_update.core.checkers import find_terminal
+        from topgrade_update.core.notifications import send_message
+
+        if self._agent_combo.count() == 0:
+            return
+        agent = self._agent_combo.currentText()
+        prompt = build_diagnose_prompt(
+            returncode=self._returncode,
+            failed_step=self._failed_step or self._current_step,
+            log_path=self._log_path or Path("."),
+        )
+        command = build_agent_command(agent, prompt)
+        term, args = find_terminal(self._cfg)
+        if term is None:
+            send_message("Error", "No terminal emulator found.")
+            return
+        try:
+            subprocess.Popen([term, *args, *command])
+        except OSError as exc:
+            send_message("Could not launch agent", str(exc))
+
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if self._session is not None and self._session.running:
+            self._session.cancel()
+            self._session.wait(timeout=2)
+            self._session.close()
+        self._end_agent()
+        super().closeEvent(event)
+
+
+class ReviewLogDialog(QDialog):
+    """Browse the current run transcript and earlier saved runs."""
+
+    def __init__(self, current: Path | None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Topgrade Update — Logs")
+        self.setMinimumSize(720, 440)
+        layout = QHBoxLayout(self)
+
+        self._list = QListWidget()
+        logs = list_run_logs()
+        if current is not None and current not in logs and current.is_file():
+            logs.insert(0, current)
+        self._paths = logs
+        for path in logs:
+            stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+            label = f"{stamp}  {path.name}"
+            if current is not None and path == current:
+                label = f"● {label}"
+            self._list.addItem(label)
+        self._list.currentRowChanged.connect(self._show_row)
+        layout.addWidget(self._list, 1)
+
+        self._text = QTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setStyleSheet("font-family: monospace;")
+        layout.addWidget(self._text, 3)
+
+        if logs:
+            self._list.setCurrentRow(0)
+        else:
+            self._text.setPlainText("No run logs found.")
+
+
+    def _show_row(self, row: int) -> None:
+        if row < 0 or row >= len(self._paths):
+            return
+        path = self._paths[row]
+        try:
+            self._text.setPlainText(path.read_text(encoding="utf-8", errors="replace"))
+            self._text.moveCursor(QTextCursor.MoveOperation.Start)
+        except OSError as exc:
+            self._text.setPlainText(f"Could not read {path}: {exc}")

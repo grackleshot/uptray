@@ -34,6 +34,43 @@ def test_load_config_reads_terminal_list_from_root_table(tmp_path) -> None:
     assert cfg.terminals == ["kitty", "xterm"]
 
 
+def test_load_config_reads_run_mode(tmp_path) -> None:
+    config_path = tmp_path / "config.toml"
+    config_path.write_text('run_mode = "verbose"\n')
+
+    cfg = load_config(config_path, environ={})
+
+    assert cfg.run_mode == "verbose"
+
+
+def test_save_run_mode_preserves_newer_settings(tmp_path) -> None:
+    from topgrade_update.core.config import save_config, save_run_mode
+    from topgrade_update.core.models import Config, NotificationConfig
+
+    path = tmp_path / "config.toml"
+    stale = Config(
+        check_interval=600,
+        notifications=NotificationConfig(enabled=False),
+        run_mode="simple",
+    )
+    save_config(stale, path)
+    # Simulate tray settings saved while a run window still holds `stale`.
+    on_disk = load_config(path, environ={})
+    on_disk.check_interval = 1200
+    on_disk.notifications.enabled = True
+    save_config(on_disk, path)
+
+    updated = save_run_mode("verbose", path)
+
+    assert updated.run_mode == "verbose"
+    assert updated.check_interval == 1200
+    assert updated.notifications.enabled is True
+    reloaded = load_config(path, environ={})
+    assert reloaded.run_mode == "verbose"
+    assert reloaded.check_interval == 1200
+    assert reloaded.notifications.enabled is True
+
+
 @pytest.mark.parametrize(
     ("section", "value"),
     [

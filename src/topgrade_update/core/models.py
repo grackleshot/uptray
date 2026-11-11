@@ -94,3 +94,4 @@ class Config:
     notifications: NotificationConfig = field(default_factory=NotificationConfig)
     tray: TrayConfig = field(default_factory=TrayConfig)
     custom_commands: list[CustomCommandConfig] = field(default_factory=list)
+    run_mode: str = "simple"  # "simple" or "verbose"

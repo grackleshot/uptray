@@ -46,6 +46,7 @@ def test_settings_edits_apply(qapp) -> None:  # noqa: ANN001
     dialog._quiet_start.setCurrentIndex(0)  # (off)
     dialog._quiet_end.setCurrentIndex(0)
     dialog._icon_style.setCurrentIndex(1)  # colorblind
+    dialog._run_mode.setCurrentIndex(1)  # verbose
     dialog._source_boxes["aur"].setChecked(True)
     dialog._source_boxes["pacman"].setChecked(False)
     dialog._custom_boxes["my-check"].setChecked(False)
@@ -58,6 +59,7 @@ def test_settings_edits_apply(qapp) -> None:  # noqa: ANN001
     assert edited.notifications.quiet_hours_start is None
     assert edited.notifications.quiet_hours_end is None
     assert edited.tray.icon_style == "colorblind"
+    assert edited.run_mode == "verbose"
     assert edited.sources["pacman"].enabled is False
     assert edited.sources["aur"].enabled is True
     assert edited.custom_commands[0].enabled is False

@@ -24,6 +24,7 @@ CLICK_ACTIONS = {"default": "Default (updates dialog or topgrade)",
                  "show_updates": "Show updates dialog",
                  "run_topgrade": "Run topgrade"}
 ICON_STYLES = {"default": "Default", "colorblind": "Colorblind-safe"}
+RUN_MODES = {"simple": "Simple", "verbose": "Verbose"}
 
 
 class SettingsDialog(QDialog):
@@ -51,6 +52,13 @@ class SettingsDialog(QDialog):
         self._terminals = QLineEdit(", ".join(cfg.terminals))
         self._terminals.setPlaceholderText("konsole, alacritty, kitty")
         form.addRow("Terminal priority", self._terminals)
+
+        self._run_mode = QComboBox()
+        for value, label in RUN_MODES.items():
+            self._run_mode.addItem(label, value)
+        mode = cfg.run_mode if cfg.run_mode in RUN_MODES else "simple"
+        self._run_mode.setCurrentIndex(max(0, list(RUN_MODES).index(mode)))
+        form.addRow("Update run mode", self._run_mode)
 
         self._click_action = QComboBox()
         for value, label in CLICK_ACTIONS.items():
@@ -152,6 +160,7 @@ class SettingsDialog(QDialog):
                 icon_style=self._icon_style.currentData(),
             ),
             custom_commands=custom_commands,
+            run_mode=self._run_mode.currentData(),
         )
 
 

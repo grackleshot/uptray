@@ -43,6 +43,7 @@ def test_tray_initialization(tray: Tray) -> None:
     assert "Check Now" in action_labels
     assert "View Updates" in action_labels
     assert "Run Topgrade" in action_labels
+    assert "Run in terminal" in action_labels
     assert "Quit" in action_labels
 
 
@@ -290,3 +291,35 @@ def test_offline_check_defers_and_retries(
 
     assert tray._action_status.text() == "Offline — waiting for network"
     assert tray._offline_retry.isActive()
+
+
+def test_open_run_window_starts_new_run_after_finished(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[object] = []
+
+    class FakeWindow:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.is_active = False
+            created.append(self)
+
+        def isVisible(self) -> bool:  # noqa: N802
+            return True
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:  # noqa: N802
+            return None
+
+        def close(self) -> None:
+            return None
+
+        def show(self) -> None:
+            return None
+
+    monkeypatch.setattr("topgrade_update.gui.tray.RunWindow", FakeWindow)
+    tray._run_window = FakeWindow()
+    tray._open_run_window([])
+    assert len(created) == 2
