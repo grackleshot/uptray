@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QSize, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase
 from PySide6.QtWidgets import (
     QDialog,
@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from topgrade_update.core.links import upstream_url
-from topgrade_update.gui.icons import status_pixmap
+from topgrade_update.gui.icons import ICON_MD, ICON_SM, status_pixmap
 from topgrade_update.gui.style import apply_theme, colors, set_primary
 
 if TYPE_CHECKING:
@@ -94,7 +94,7 @@ def _banner(text: str, detail: str, kind: str = "warning") -> QFrame:
     row.setContentsMargins(12, 8, 12, 8)
     row.setSpacing(10)
     icon = QLabel()
-    icon.setPixmap(status_pixmap(kind, 22))
+    icon.setPixmap(status_pixmap(kind, ICON_MD))
     row.addWidget(icon, 0, Qt.AlignmentFlag.AlignTop)
     text_box = QVBoxLayout()
     text_box.setSpacing(0)
@@ -153,6 +153,7 @@ class UpdatesDialog(QDialog):
         self._tree.setColumnCount(3)
         self._tree.setHeaderLabels(["Package", "Current", "New"])
         self._tree.setRootIsDecorated(True)
+        self._tree.setIconSize(QSize(ICON_SM, ICON_SM))
         self._tree.setUniformRowHeights(True)
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._tree.setToolTip("Double-click a package to open its project page.")
@@ -178,9 +179,10 @@ class UpdatesDialog(QDialog):
                 tokens = colors()
                 error_item = QTreeWidgetItem(
                     self._tree,
-                    [f"⚠ {result.source}: check failed — {result.error}"],
+                    [f"{result.source}: check failed — {result.error}"],
                 )
                 error_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                error_item.setIcon(0, status_pixmap("warning", ICON_SM))
                 error_item.setForeground(0, QColor(tokens["warning"]))
                 error_item.setToolTip(0, result.error)
 

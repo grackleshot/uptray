@@ -45,7 +45,13 @@ from topgrade_update.core.topgrade_session import (
     build_diagnose_prompt,
     list_run_logs,
 )
-from topgrade_update.gui.icons import status_pixmap
+from topgrade_update.gui.icons import (
+    ICON_LG,
+    ICON_SM,
+    ICON_XL,
+    spinner_pixmaps,
+    status_pixmap,
+)
 from topgrade_update.gui.style import apply_theme, colors, set_danger, set_primary
 from topgrade_update.gui.terminal_widget import TerminalWidget, webengine_available
 
@@ -117,6 +123,7 @@ class RunWindow(QMainWindow):
         self.agent_event.connect(self._on_agent_event)
 
         tokens = colors()
+        self._spin_frame = 0
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
@@ -127,7 +134,7 @@ class RunWindow(QMainWindow):
         header = QHBoxLayout()
         header.setSpacing(12)
         self._state_icon = QLabel()
-        self._state_icon.setPixmap(status_pixmap("running", 36))
+        self._state_icon.setPixmap(status_pixmap("running", ICON_LG))
         header.addWidget(self._state_icon, 0, Qt.AlignmentFlag.AlignTop)
 
         state_box = QVBoxLayout()
@@ -215,7 +222,7 @@ class RunWindow(QMainWindow):
         simple_layout.setSpacing(10)
         simple_layout.addStretch(2)
         self._big_icon = QLabel()
-        self._big_icon.setPixmap(status_pixmap("running", 56))
+        self._big_icon.setPixmap(status_pixmap("running", ICON_XL))
         self._big_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
         simple_layout.addWidget(self._big_icon)
         self._big_title = QLabel("Updating your computer…")
@@ -241,6 +248,19 @@ class RunWindow(QMainWindow):
             f" font-family: '{mono}';"
         )
         simple_layout.addWidget(self._activity_label)
+
+        # Recovery row: error states must always offer a way forward.
+        self._hero_actions = QWidget()
+        hero_row = QHBoxLayout(self._hero_actions)
+        hero_row.setSpacing(8)
+        hero_row.addStretch()
+        self._btn_try_again = QPushButton("Try again")
+        set_primary(self._btn_try_again)
+        self._btn_try_again.clicked.connect(self._try_again)
+        hero_row.addWidget(self._btn_try_again)
+        hero_row.addStretch()
+        self._hero_actions.hide()
+        simple_layout.addWidget(self._hero_actions)
         simple_layout.addStretch(3)
         self._stack.addWidget(simple_page)
 
@@ -265,7 +285,7 @@ class RunWindow(QMainWindow):
         retry_layout.setContentsMargins(12, 8, 12, 8)
         retry_layout.setSpacing(8)
         retry_icon = QLabel()
-        retry_icon.setPixmap(status_pixmap("warning", 18))
+        retry_icon.setPixmap(status_pixmap("warning", ICON_SM))
         retry_layout.addWidget(retry_icon)
         retry_layout.addWidget(QLabel("<b>Topgrade asks:</b> retry the failed step?"))
         for label, key in (
@@ -322,6 +342,8 @@ class RunWindow(QMainWindow):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
+        self._spin_timer = QTimer(self)
+        self._spin_timer.timeout.connect(self._advance_spinner)
         self._set_mode(cfg.run_mode if cfg.run_mode in {"simple", "verbose"} else "simple")
         QTimer.singleShot(0, self._start)
 
@@ -357,6 +379,7 @@ class RunWindow(QMainWindow):
                 self._set_state(
                     "failed", "Topgrade is missing", "Install topgrade, then try again."
                 )
+                self._hero_actions.hide()
                 self._btn_cancel.setEnabled(False)
                 return
             command = [topgrade, *self._extra_args]
@@ -368,11 +391,52 @@ class RunWindow(QMainWindow):
         self._log_path = self._session.log_path
         self._set_state("running", "Updating your computer…", "Starting topgrade…")
         self._timer.start(1000)
+        self._spin_timer.start(120)
         try:
             self._session.start()
         except OSError as exc:
+            self._spin_timer.stop()
             self._set_state("failed", "Could not start", str(exc))
             self._btn_cancel.setEnabled(False)
+
+    def _advance_spinner(self) -> None:
+        """Rotate the activity spinner on the header and the running step."""
+        running = self._session is not None and self._session.running
+        if not running:
+            self._spin_timer.stop()
+            return
+        self._spin_frame = (self._spin_frame + 1) % len(spinner_pixmaps())
+        frames = spinner_pixmaps()
+        self._state_icon.setPixmap(frames[self._spin_frame])
+        for name in self._step_order:
+            if self._steps[name].status == "running":
+                item = self._step_items.get(name)
+                if item is not None:
+                    item.setIcon(spinner_pixmaps(ICON_SM)[self._spin_frame])
+
+    def _try_again(self) -> None:
+        """Reset the run state and start a fresh topgrade session."""
+        self._hero_actions.hide()
+        self._btn_diagnose.setDefault(False)
+        self._btn_diagnose.setProperty("class", None)
+        self._btn_diagnose.style().unpolish(self._btn_diagnose)
+        self._btn_diagnose.style().polish(self._btn_diagnose)
+        self._btn_cancel.setText("Cancel")
+        set_danger(self._btn_cancel)
+        self._btn_cancel.setEnabled(True)
+        self._returncode = None
+        self._failed_step = None
+        self._current_step = None
+        self._steps.clear()
+        self._step_order.clear()
+        self._step_items.clear()
+        self._step_list.clear()
+        self._elapsed = 0
+        self._activity_line = ""
+        self._activity_label.setText("")
+        self._progress.setRange(0, 0)
+        self._spin_frame = 0
+        self._start()
 
     def _tick(self) -> None:
         self._elapsed += 1
@@ -384,9 +448,9 @@ class RunWindow(QMainWindow):
     def _set_state(self, kind: str, title: str, subtitle_html: str) -> None:
         """Update the header and Simple-pane hero for a run state."""
         tokens = colors()
-        self._state_icon.setPixmap(status_pixmap(kind, 36))
+        self._state_icon.setPixmap(status_pixmap(kind, ICON_LG))
         self._state_label.setText(title)
-        self._big_icon.setPixmap(status_pixmap(kind, 56))
+        self._big_icon.setPixmap(status_pixmap(kind, ICON_XL))
         self._big_title.setText(title)
         self._subtitle_label.setText(
             f'<span style="color:{tokens["muted"]}">{subtitle_html}</span>'
@@ -482,7 +546,7 @@ class RunWindow(QMainWindow):
                 self._step_list.scrollToBottom()
             else:
                 item.setText(f"{name} — {word}")
-            item.setIcon(status_pixmap(icon_kind, 16))
+            item.setIcon(status_pixmap(icon_kind, ICON_SM))
             tooltip = f"{name}: {word}"
             if step.latest_line:
                 tooltip = f"{tooltip}\n{step.latest_line}"
@@ -530,6 +594,7 @@ class RunWindow(QMainWindow):
 
     def _finish(self, event: SessionFinished) -> None:
         self._timer.stop()
+        self._spin_timer.stop()
         self._returncode = event.returncode
         self._log_path = event.log_path
         self._failed_step = event.failed_step or self._failed_step
@@ -548,6 +613,7 @@ class RunWindow(QMainWindow):
                 "All done!",
                 f"Up to date · finished in {elapsed}",
             )
+            self._hero_actions.hide()
             self._btn_cancel.setDefault(True)
             set_primary(self._btn_cancel)
         else:
@@ -560,8 +626,10 @@ class RunWindow(QMainWindow):
             if failed:
                 detail = f"“{failed}” failed · {detail}"
             self._set_state("failed", "Something went wrong", detail)
+            self._hero_actions.show()
+            # Keyboard default lands on Diagnose; the hero's "Try again" stays
+            # the single visually-primary action.
             self._btn_diagnose.setDefault(True)
-            set_primary(self._btn_diagnose)
         self.finished.emit(event.returncode)
         if self._on_finished is not None:
             self._on_finished(event.returncode)

@@ -127,7 +127,9 @@ def _build_qss(tokens: Mapping[str, str]) -> str:
         border-color: {t['accent']};
     }}
     QPushButton:focus {{
-        border-color: {t['accent']};
+        /* 2px WCAG-visible focus ring; padding shrinks to avoid layout shift. */
+        border: 2px solid {t['accent']};
+        padding: 5px 13px;
     }}
     QPushButton[class="primary"]:focus {{
         border: 2px solid {t['text']};
@@ -182,7 +184,8 @@ def _build_qss(tokens: Mapping[str, str]) -> str:
         min-height: 18px;
     }}
     QLineEdit:focus, QComboBox:focus, QSpinBox:focus {{
-        border-color: {t['accent']};
+        border: 2px solid {t['accent']};
+        padding: 4px 7px;
     }}
     QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
         color: {t['muted']};

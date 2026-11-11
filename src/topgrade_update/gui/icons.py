@@ -23,6 +23,12 @@ from topgrade_update.gui.style import colors
 
 _SIZE = 64
 
+# Icon size tokens shared by every window (keep the scale small and consistent).
+ICON_SM = 16
+ICON_MD = 24
+ICON_LG = 32
+ICON_XL = 48
+
 # Okabe-Ito colorblind-safe palette alongside the default colors.
 _PALETTES: dict[str, dict[str, str]] = {
     "default": {
@@ -114,11 +120,40 @@ class IconCache:
         return self._cache[kind]
 
 
-def status_pixmap(kind: str, size: int = 16) -> QPixmap:
+def status_pixmap(kind: str, size: int = ICON_SM) -> QPixmap:
     """Return a small status icon (pending/running/done/failed/skipped/warning)."""
     tokens = colors()
     color, glyph = _STATUS_KINDS.get(kind, ("muted", "ring"))
     return _make_icon(tokens[color], glyph=glyph).pixmap(size)
+
+
+_SPINNER_FRAMES = 8
+_spinner_cache: dict[int, list[QPixmap]] = {}
+
+
+def spinner_pixmaps(size: int = ICON_MD) -> list[QPixmap]:
+    """Return rotation frames for a gentle activity spinner (accent color)."""
+    cached = _spinner_cache.get(size)
+    if cached is not None:
+        return cached
+    tokens = colors()
+    frames: list[QPixmap] = []
+    for frame in range(_SPINNER_FRAMES):
+        pix = QPixmap(size, size)
+        pix.fill(QColor(0, 0, 0, 0))
+        p = QPainter(pix)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        pen = QPen(QColor(tokens["accent"]), max(2.0, size / 12))
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        p.setPen(pen)
+        inset = size * 0.12
+        rect = QRectF(inset, inset, size - inset * 2, size - inset * 2)
+        start = 90 * 16 - frame * (360 * 16 // _SPINNER_FRAMES)
+        p.drawArc(rect, start, 270 * 16)
+        p.end()
+        frames.append(pix)
+    _spinner_cache[size] = frames
+    return frames
 
 
 def _make_icon(
