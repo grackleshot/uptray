@@ -175,9 +175,11 @@ Offscreen screenshot pass (light + dark) found: Settings ~1050px tall was
 squeezed on the 1536x864 display (checkboxes clipped) -> cards now scroll;
 "Flatpak apps & runtimes" lost "&" to the mnemonic; Runs list too narrow.
 
-Not yet verified live: the real tray was not restarted (old build, pid 6732,
-had a diagnose agent running). Still to check in the real tray: close
-mid-run then reopen, Quit mid-run, a real pacdiff / paru prompt via the text
-box, Update only Flatpak, xterm.js behavior in a long hidden run.
+Live check (2026-11-12, real tray restarted on the new build): user confirmed
+the reboot banner + 1-update count, dry run -> "Run for real", closing
+mid-run hides and the tray brings the window back, and the History Runs tab.
+Still unverified live: Cancel/Quit "Stop the update?" confirmation (covered
+by tests only), a real pacdiff / paru prompt via the text box, Update only
+this source, xterm.js behavior in a long hidden run.
 
 Tests: 231 passing; ruff and mypy clean.
