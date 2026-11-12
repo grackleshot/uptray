@@ -32,7 +32,10 @@ cp "$PROJECT_DIR/icons/hicolor/scalable/apps/topgrade-update.svg" "$ICON_DIR/"
 
 echo "Installing desktop file to $DESKTOP_DIR..."
 mkdir -p "$DESKTOP_DIR"
-cp "$PROJECT_DIR/topgrade-update-tray.desktop" "$DESKTOP_DIR/"
+# Absolute Exec path: ~/.local/bin is not always on the desktop session's PATH.
+BIN="$(command -v topgrade-update || true)"
+sed "s|^Exec=topgrade-update|Exec=${BIN:-topgrade-update}|" \
+    "$PROJECT_DIR/topgrade-update-tray.desktop" > "$DESKTOP_DIR/topgrade-update-tray.desktop"
 
 echo "Updating icon cache..."
 if command -v gtk-update-icon-cache &>/dev/null; then

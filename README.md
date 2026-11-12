@@ -42,6 +42,45 @@ sudo pacman -S pacman-contrib
 
 ## Installation
 
+### On a CachyOS / Arch PC (recommended)
+
+The repo is private, so each PC signs in to GitHub once with the GitHub CLI.
+These commands work in fish and bash:
+
+```bash
+sudo pacman -S --needed github-cli
+gh auth login
+gh api -H "Accept: application/vnd.github.raw" repos/grackleshot/topgrade-update/contents/scripts/install.sh > /tmp/topgrade-update-install.sh
+bash /tmp/topgrade-update-install.sh
+```
+
+The installer:
+
+- installs whatever is missing of `git`, `github-cli`, `uv` and `pacman-contrib`
+  (asks for your sudo password only if something is missing)
+- installs `topgrade` from the repos or, failing that, the AUR via `paru`/`yay`
+- runs `gh auth setup-git` so git can fetch this private repo
+- installs the app with `uv tool install` from `main` (Python 3.14, PySide6)
+- adds the app-menu entry and icon, turns on autostart, and starts the tray
+
+Pass `--no-autostart` to skip autostart. Re-running the script is safe. If your
+shell can't find `topgrade-update` afterwards, run `uv tool update-shell` once.
+
+Update to the latest `main`:
+
+```bash
+uv tool upgrade topgrade-update
+```
+
+Uninstall:
+
+```bash
+topgrade-update --tray --disable
+uv tool uninstall topgrade-update
+rm ~/.local/share/applications/topgrade-update-tray.desktop \
+   ~/.local/share/icons/hicolor/scalable/apps/topgrade-update.svg
+```
+
 ### From source
 
 ```bash

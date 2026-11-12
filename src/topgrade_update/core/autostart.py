@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import sys
 from pathlib import Path
 
 _CONFIG_HOME = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
@@ -10,9 +11,14 @@ AUTOSTART_FILE = AUTOSTART_DIR / "topgrade-update-tray.desktop"
 
 # systemd-xdg-autostart-generator resolves bare Exec names against the user
 # manager's PATH, which does not include ~/.local/bin on this system, so the
-# autostart unit is silently not generated. Always write an absolute path.
-_EXEC_PATH = shutil.which("topgrade-update") or str(
-    Path.home() / ".local" / "bin" / "topgrade-update"
+# autostart unit is silently not generated. Always write an absolute path, and
+# prefer the executable actually running: another topgrade-update may come
+# first on PATH (e.g. a dev wrapper next to a uv tool install).
+_ARGV0 = Path(sys.argv[0])
+_EXEC_PATH = (
+    str(_ARGV0.absolute())
+    if _ARGV0.name == "topgrade-update"
+    else shutil.which("topgrade-update") or str(Path.home() / ".local" / "bin" / "topgrade-update")
 )
 
 _AUTOSTART_CONTENT = f"""\
