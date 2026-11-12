@@ -97,6 +97,38 @@ rm ~/.local/share/applications/uptray.desktop \
    ~/.local/share/icons/hicolor/scalable/apps/uptray.svg
 ```
 
+### Using Uptray instead of Cachy-Update (CachyOS)
+
+CachyOS ships its own update notifier, Cachy-Update (a fork of Arch-Update). It
+runs its own tray icon plus a background check timer, so alongside Uptray you
+would get two update icons and two sets of notifications. To switch it off for
+your user while keeping the package installed (works in fish and bash):
+
+```bash
+# Stop its tray icon now
+pkill -f arch-update-tray
+# Don't start it at login (per-user override of /etc/xdg/autostart/arch-update-tray.desktop)
+mkdir -p ~/.config/autostart
+printf '[Desktop Entry]\nHidden=true\n' > ~/.config/autostart/arch-update-tray.desktop
+# Stop its background update checks
+systemctl --user disable --now arch-update.timer
+```
+
+To turn Cachy-Update back on:
+
+```bash
+rm ~/.config/autostart/arch-update-tray.desktop
+systemctl --user enable --now arch-update.timer
+setsid -f arch-update --tray
+```
+
+Or remove it completely (this also removes the `cachy-update` / `arch-update`
+commands):
+
+```bash
+sudo pacman -Rns cachy-update
+```
+
 ### From source
 
 ```bash
