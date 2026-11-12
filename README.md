@@ -56,20 +56,9 @@ sudo pacman -S pacman-contrib
 > installer removes the old install, and on first launch Uptray moves your
 > settings, run history and autostart entry over to its new folders.
 
-### From the AUR (recommended)
+### On a CachyOS / Arch PC (recommended)
 
-```bash
-paru -S uptray
-```
-
-(or `yay -S uptray`). Then open **Uptray** from your app menu and tick
-**Start the tray applet at login** in its Settings. Updates arrive with your
-normal system updates.
-
-### One-line installer (any Arch-based PC)
-
-Installs from `main` with uv instead of as a system package. Works in fish and
-bash:
+One command (works in fish and bash):
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/grackleshot/uptray/main/scripts/install.sh)"
