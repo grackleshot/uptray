@@ -6,10 +6,11 @@ from pathlib import Path
 
 # A realistic 1920x1080 screen: the default offscreen screen is 800x800, smaller
 # than RunWindow's minimum width, so restored geometry got clamped by font metrics.
-os.environ.setdefault(
-    "QT_QPA_PLATFORM",
-    f"offscreen:configfile={Path(__file__).with_name('offscreen-screen.json')}",
-)
+# CI sets a plain QT_QPA_PLATFORM=offscreen, so upgrade that too.
+if os.environ.get("QT_QPA_PLATFORM", "offscreen") == "offscreen":
+    os.environ["QT_QPA_PLATFORM"] = (
+        f"offscreen:configfile={Path(__file__).with_name('offscreen-screen.json')}"
+    )
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
