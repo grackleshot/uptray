@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
-import fcntl
-import os
 import shutil
 import signal
 import subprocess
@@ -12,7 +9,7 @@ import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from threading import Event, Thread
-from typing import IO, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -60,6 +57,8 @@ from topgrade_update.gui.tray_logic import (
     PACMAN_DEBOUNCE_MS,
     PACMAN_LOCAL_DB_DIR,
     RESUME_CHECK_DELAY_MS,
+    _acquire_instance_lock,
+    _watch_resume,
     is_reboot_pending,
     is_snoozed,
     pacman_watch_dir,
@@ -96,44 +95,6 @@ class CheckThread(QThread):
         self.result.emit(results, news)
 
 
-def _watch_resume(emit: Callable[[], None], stop: Event) -> None:
-    """Watch logind PrepareForSleep on the system bus and emit on wake.
-
-    Runs in a daemon thread; failures are non-fatal (no resume detection).
-    """
-    try:
-        from jeepney import MatchRule
-        from jeepney.bus_messages import message_bus
-        from jeepney.io.blocking import open_dbus_connection
-
-        bus = open_dbus_connection(bus="SYSTEM")
-    except Exception:
-        return
-    rule = MatchRule(
-        type="signal",
-        sender="org.freedesktop.login1",
-        interface="org.freedesktop.login1.Manager",
-        member="PrepareForSleep",
-        path="/org/freedesktop/login1",
-    )
-    try:
-        bus.send_and_get_reply(message_bus.AddMatch(rule), timeout=3)
-        with bus.filter(rule) as matches:
-            while not stop.is_set():
-                try:
-                    message = bus.recv_until_filtered(matches, timeout=0.25)
-                except TimeoutError:
-                    continue
-                body = getattr(message, "body", ())
-                if body and body[0] is False:  # False = resuming
-                    emit()
-    except Exception as exc:
-        get_logger("tray").debug("Resume watcher stopped: %s", exc)
-    finally:
-        with contextlib.suppress(Exception):
-            bus.close()
-
-
 def launch_topgrade_in_terminal(
     cfg: Config | None = None,
     extra_args: list[str] | None = None,
@@ -152,25 +113,6 @@ def launch_topgrade_in_terminal(
     except OSError as exc:
         get_logger("tray").exception("Could not launch topgrade terminal")
         send_message("Could not launch Topgrade", str(exc))
-
-
-def _acquire_instance_lock() -> IO[str] | None:
-    """Take an exclusive single-instance lock, or None when already held."""
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if runtime:
-        lock_path = Path(runtime) / "topgrade-update.lock"
-    else:
-        lock_path = Path(f"/tmp/topgrade-update-{os.getuid()}.lock")
-    try:
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        handle = lock_path.open("w")
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError:
-        return None
-    handle.truncate(0)
-    handle.write(f"{os.getpid()}\n")
-    handle.flush()
-    return handle
 
 
 class Tray(QSystemTrayIcon):

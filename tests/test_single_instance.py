@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from topgrade_update.gui.tray import _acquire_instance_lock
+from topgrade_update.gui.tray_logic import _acquire_instance_lock
 
 
 def test_lock_is_exclusive(tmp_path, monkeypatch) -> None:  # noqa: ANN001

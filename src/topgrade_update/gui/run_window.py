@@ -10,10 +10,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QFontDatabase, QKeyEvent, QKeySequence
+from PySide6.QtGui import QCloseEvent, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
-    QComboBox,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -43,11 +42,10 @@ from topgrade_update.core.topgrade_session import (
     SessionFinished,
     StepEvent,
     TopgradeSession,
-    available_agents,
-    build_agent_command,
     build_diagnose_prompt,
     default_runs_dir,
 )
+from topgrade_update.gui.diagnose_panel import DiagnosePanel
 from topgrade_update.gui.dialog import ReviewLogDialog
 from topgrade_update.gui.icons import (
     ICON_LG,
@@ -56,6 +54,7 @@ from topgrade_update.gui.icons import (
     spinner_pixmaps,
     status_pixmap,
 )
+from topgrade_update.gui.run_simple_page import build_simple_page
 from topgrade_update.gui.style import (
     apply_theme,
     colors,
@@ -64,7 +63,7 @@ from topgrade_update.gui.style import (
     set_danger,
     set_primary,
 )
-from topgrade_update.gui.terminal_widget import TerminalWidget, webengine_available
+from topgrade_update.gui.terminal_widget import TerminalWidget
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -100,7 +99,14 @@ class RunWindow(QMainWindow):
 
     finished = Signal(int)
     session_event = Signal(object)
-    agent_event = Signal(object)
+
+    # Built by run_simple_page.build_simple_page.
+    _big_icon: QLabel
+    _big_title: QLabel
+    _big_subtitle: QLabel
+    _activity_label: QLabel
+    _hero_actions: QWidget
+    _btn_try_again: QPushButton
 
     def __init__(
         self,
@@ -125,7 +131,6 @@ class RunWindow(QMainWindow):
         self._is_dry_run = "--dry-run" in self._extra_args
         self._last_output = time.monotonic()
         self._session: TopgradeSession | None = None
-        self._agent_session: TopgradeSession | None = None
         self._steps: dict[str, StepEvent] = {}
         self._step_order: list[str] = []
         self._step_items: dict[str, QListWidgetItem] = {}
@@ -143,7 +148,6 @@ class RunWindow(QMainWindow):
         self.setWindowTitle(title or "Topgrade Update — Run")
         self.setMinimumSize(840, 560)
         self.session_event.connect(self._on_session_event)
-        self.agent_event.connect(self._on_agent_event)
 
         tokens = colors()
         self._spin_frame = 0
@@ -246,52 +250,7 @@ class RunWindow(QMainWindow):
 
         self._stack = QStackedWidget()
 
-        simple_page = QWidget()
-        simple_layout = QVBoxLayout(simple_page)
-        simple_layout.setContentsMargins(24, 32, 24, 24)
-        simple_layout.setSpacing(10)
-        simple_layout.addStretch(2)
-        self._big_icon = QLabel()
-        self._big_icon.setPixmap(status_pixmap("running", ICON_XL))
-        self._big_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        simple_layout.addWidget(self._big_icon)
-        self._big_title = QLabel("Updating your computer…")
-        big_font = self._big_title.font()
-        big_font.setPointSizeF(big_font.pointSizeF() + 7)
-        big_font.setBold(True)
-        self._big_title.setFont(big_font)
-        self._big_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        simple_layout.addWidget(self._big_title)
-        self._big_subtitle = QLabel(
-            f'<span style="color:{tokens["muted"]}">'
-            "This may take a few minutes. You can keep working."
-            "</span>"
-        )
-        self._big_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        simple_layout.addWidget(self._big_subtitle)
-        simple_layout.addSpacing(8)
-        self._activity_label = QLabel("")
-        self._activity_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
-        self._activity_label.setStyleSheet(
-            f"color: {tokens['muted']};"
-            f" font-family: '{mono}';"
-        )
-        simple_layout.addWidget(self._activity_label)
-
-        # Recovery row: error states must always offer a way forward.
-        self._hero_actions = QWidget()
-        hero_row = QHBoxLayout(self._hero_actions)
-        hero_row.setSpacing(8)
-        hero_row.addStretch()
-        self._btn_try_again = QPushButton("Try again")
-        set_primary(self._btn_try_again)
-        self._btn_try_again.clicked.connect(self._try_again)
-        hero_row.addWidget(self._btn_try_again)
-        hero_row.addStretch()
-        self._hero_actions.hide()
-        simple_layout.addWidget(self._hero_actions)
-        simple_layout.addStretch(3)
+        simple_page = build_simple_page(self, tokens)
         self._stack.addWidget(simple_page)
 
         self._term = TerminalWidget()
@@ -372,43 +331,7 @@ class RunWindow(QMainWindow):
         layout.addWidget(self._prompt_bar)
 
         # --- Diagnose drawer ---------------------------------------------
-        self._diagnose = QFrame()
-        self._diagnose.setStyleSheet(
-            f"QFrame {{ background: {tokens['card']};"
-            f" border: 1px solid {tokens['border']}; border-radius: 10px; }}"
-            "QLabel { background: transparent; border: none; }"
-        )
-        diag_layout = QVBoxLayout(self._diagnose)
-        diag_layout.setContentsMargins(12, 10, 12, 12)
-        diag_layout.setSpacing(8)
-        picker = QHBoxLayout()
-        picker.setSpacing(8)
-        diag_title = QLabel("<b>Diagnose the failure</b>")
-        picker.addWidget(diag_title)
-        picker.addStretch()
-        picker.addWidget(QLabel(f'<span style="color:{tokens["muted"]}">Agent</span>'))
-        self._agent_combo = QComboBox()
-        for name in available_agents():
-            self._agent_combo.addItem(name)
-        picker.addWidget(self._agent_combo)
-        self._btn_start_agent = QPushButton("Start session")
-        self._btn_start_agent.clicked.connect(self._start_agent)
-        self._btn_end_agent = QPushButton("End session")
-        self._btn_end_agent.clicked.connect(self._end_agent)
-        self._btn_end_agent.setEnabled(False)
-        picker.addWidget(self._btn_start_agent)
-        picker.addWidget(self._btn_end_agent)
-        if not webengine_available():
-            open_term = QPushButton("Open in terminal")
-            open_term.clicked.connect(self._open_agent_external)
-            picker.addWidget(open_term)
-        diag_layout.addLayout(picker)
-        self._agent_term = TerminalWidget()
-        self._agent_term.input_ready.connect(self._agent_write)
-        self._agent_term.set_resize_handler(self._on_agent_resize)
-        diag_layout.addWidget(self._agent_term)
-        self._diagnose.setMinimumHeight(200)
-        self._diagnose.hide()
+        self._diagnose = DiagnosePanel(cfg, self._runs_dir, self._diagnose_prompt)
 
         # Resizable vertical split: the diagnose drawer must be drag-resizable,
         # not squeezed into whatever space the layout has left over.
@@ -710,14 +633,6 @@ class RunWindow(QMainWindow):
         if self._session is not None:
             self._session.resize(rows, cols)
 
-    def _agent_write(self, data: str) -> None:
-        if self._agent_session is not None:
-            self._agent_session.write(data)
-
-    def _on_agent_resize(self, rows: int, cols: int) -> None:
-        if self._agent_session is not None:
-            self._agent_session.resize(rows, cols)
-
     def _cancel(self) -> None:
         if self._session is not None and self._session.running:
             answer = QMessageBox.question(
@@ -844,75 +759,6 @@ class RunWindow(QMainWindow):
         self._pty_write(f"{answer}\n")
         self._prompt_bar.hide()
 
-    def _start_agent(self) -> None:
-        if self._agent_combo.count() == 0:
-            QMessageBox.information(
-                self, "No agents", "Install claude, codex, or pi to diagnose failures."
-            )
-            return
-        agent = self._agent_combo.currentText()
-        prompt = self._diagnose_prompt()
-        try:
-            command = build_agent_command(agent, prompt)
-        except ValueError as exc:
-            QMessageBox.warning(self, "Agent error", str(exc))
-            return
-        self._end_agent()
-        self._agent_term.clear()
-        self._agent_session = TopgradeSession(
-            command,
-            cwd=Path.home(),
-            # Kept apart so diagnose transcripts never show up as update runs.
-            runs_dir=self._runs_dir / "agents",
-            enable_askpass=False,
-            on_event=self.agent_event.emit,
-        )
-        try:
-            self._agent_session.start()
-        except OSError as exc:
-            QMessageBox.warning(self, "Could not start agent", str(exc))
-            self._agent_session = None
-            return
-        self._btn_start_agent.setEnabled(False)
-        self._btn_end_agent.setEnabled(True)
-        self._agent_term.focus_terminal()
-
-    def _on_agent_event(self, event: object) -> None:
-        # Marshal to GUI thread via the same signal pattern used for topgrade.
-        if isinstance(event, OutputChunk):
-            self._agent_term.write(event.text)
-        elif isinstance(event, SessionFinished):
-            self._btn_start_agent.setEnabled(True)
-            self._btn_end_agent.setEnabled(False)
-
-    def _end_agent(self) -> None:
-        if self._agent_session is None:
-            return
-        self._agent_session.cancel()
-        self._agent_session.close()
-        self._agent_session = None
-        self._btn_start_agent.setEnabled(True)
-        self._btn_end_agent.setEnabled(False)
-
-    def _open_agent_external(self) -> None:
-        import subprocess
-
-        from topgrade_update.core.checkers import find_terminal
-
-        if self._agent_combo.count() == 0:
-            return
-        agent = self._agent_combo.currentText()
-        prompt = self._diagnose_prompt()
-        command = build_agent_command(agent, prompt)
-        term, args = find_terminal(self._cfg)
-        if term is None:
-            send_message("Error", "No terminal emulator found.")
-            return
-        try:
-            subprocess.Popen([term, *args, *command])
-        except OSError as exc:
-            send_message("Could not launch agent", str(exc))
-
     def shutdown(self) -> None:
         """Stop any running session and close for real (used on app quit)."""
         self._quitting = True
@@ -945,6 +791,6 @@ class RunWindow(QMainWindow):
             self._session.cancel()
             self._session.wait(timeout=2)
             self._session.close()
-        self._end_agent()
+        self._diagnose.close_session()
         super().closeEvent(event)
 
