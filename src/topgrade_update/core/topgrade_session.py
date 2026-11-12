@@ -5,9 +5,11 @@ Qt-free so the session can be unit-tested with a fake command.
 
 from __future__ import annotations
 
+import atexit
 import codecs
 import contextlib
 import errno
+import functools
 import os
 import pty
 import queue
@@ -16,7 +18,9 @@ import select
 import shutil
 import signal
 import socket
+import stat
 import struct
+import tempfile
 import termios
 import threading
 import time
@@ -645,9 +649,7 @@ class TopgradeSession:
         return True
 
     def _start_askpass_server(self) -> None:
-        runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/topgrade-update-{os.getuid()}")
-        runtime.mkdir(parents=True, exist_ok=True)
-        sock_path = runtime / f"topgrade-update-askpass-{os.getpid()}-{time.time_ns()}.sock"
+        sock_path = _private_dir() / f"topgrade-update-askpass-{os.getpid()}-{time.time_ns()}.sock"
         with contextlib.suppress(FileNotFoundError):
             sock_path.unlink()
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -725,6 +727,35 @@ def _decode_wait_status(status: int) -> int:
     return 1
 
 
+def private_runtime_dir() -> Path | None:
+    """$XDG_RUNTIME_DIR if it is a directory only this user can reach, else None."""
+    raw = os.environ.get("XDG_RUNTIME_DIR")
+    if not raw:
+        return None
+    try:
+        info = os.stat(raw)
+    except OSError:
+        return None
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        return None
+    return Path(raw)
+
+
+@functools.cache
+def _private_dir() -> Path:
+    """Directory for the askpass socket and sudo helpers that no other user can touch.
+
+    Never a predictable /tmp path: another local user could create it first and
+    plant a fake ``sudo`` that captures the password.
+    """
+    runtime = private_runtime_dir()
+    if runtime is not None:
+        return runtime
+    path = Path(tempfile.mkdtemp(prefix="topgrade-update-"))  # 0700, unpredictable name
+    atexit.register(shutil.rmtree, path, True)
+    return path
+
+
 def _askpass_launcher() -> str:
     """Write a tiny SUDO_ASKPASS script that talks to our Unix socket."""
     import sys
@@ -737,9 +768,7 @@ def _askpass_launcher() -> str:
         "s.sendall(prompt.encode());"
         "sys.stdout.write(s.recv(4096).decode())"
     )
-    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/topgrade-update-{os.getuid()}")
-    runtime.mkdir(parents=True, exist_ok=True)
-    helper = runtime / f"topgrade-update-askpass-{os.getpid()}.sh"
+    helper = _private_dir() / f"topgrade-update-askpass-{os.getpid()}.sh"
     helper.write_text(f"#!/bin/sh\nexec {sys.executable} -c {script!r} \"$@\"\n", encoding="utf-8")
     helper.chmod(0o700)
     return str(helper)
@@ -747,8 +776,7 @@ def _askpass_launcher() -> str:
 
 def _sudo_askpass_wrapper_dir(real_sudo: str) -> str:
     """Return a PATH directory containing a ``sudo`` that always passes ``-A``."""
-    runtime = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/topgrade-update-{os.getuid()}")
-    wrapper_dir = runtime / f"topgrade-update-sudo-wrap-{os.getpid()}"
+    wrapper_dir = _private_dir() / f"topgrade-update-sudo-wrap-{os.getpid()}"
     wrapper_dir.mkdir(parents=True, exist_ok=True)
     wrapper = wrapper_dir / "sudo"
     wrapper.write_text(

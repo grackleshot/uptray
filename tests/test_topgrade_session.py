@@ -331,3 +331,39 @@ def test_diagnose_prompt_includes_reason_when_known(tmp_path: Path) -> None:
     assert "Reason" not in build_diagnose_prompt(
         returncode=1, failed_step="npm", log_path=tmp_path / "x.log"
     )
+
+
+def test_private_runtime_dir_rejects_shared_or_missing_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from topgrade_update.core.topgrade_session import private_runtime_dir
+
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    shared = tmp_path / "shared"
+    shared.mkdir(mode=0o755)
+    shared.chmod(0o755)
+
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(private))
+    assert private_runtime_dir() == private
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(shared))
+    assert private_runtime_dir() is None
+    monkeypatch.delenv("XDG_RUNTIME_DIR")
+    assert private_runtime_dir() is None
+
+
+def test_sudo_helpers_never_use_a_predictable_tmp_dir(monkeypatch: pytest.MonkeyPatch) -> None:
+    import stat
+
+    from topgrade_update.core import topgrade_session
+
+    monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
+    topgrade_session._private_dir.cache_clear()
+    try:
+        wrapper_dir = Path(topgrade_session._sudo_askpass_wrapper_dir("/usr/bin/sudo"))
+        base = wrapper_dir.parent
+        assert base != Path(f"/tmp/topgrade-update-{os.getuid()}")
+        assert stat.S_IMODE(base.stat().st_mode) == 0o700
+        assert base.stat().st_uid == os.getuid()
+    finally:
+        topgrade_session._private_dir.cache_clear()

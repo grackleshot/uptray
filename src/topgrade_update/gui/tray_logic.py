@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
 from topgrade_update.core.logging import get_logger
+from topgrade_update.core.topgrade_session import private_runtime_dir
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -87,11 +88,13 @@ def _watch_resume(emit: Callable[[], None], stop: Event) -> None:
 
 def _acquire_instance_lock() -> IO[str] | None:
     """Take an exclusive single-instance lock, or None when already held."""
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    if runtime:
-        lock_path = Path(runtime) / "topgrade-update.lock"
+    runtime = private_runtime_dir()
+    if runtime is not None:
+        lock_path = runtime / "topgrade-update.lock"
     else:
-        lock_path = Path(f"/tmp/topgrade-update-{os.getuid()}.lock")
+        # Not a predictable /tmp path, which another user could create to block us.
+        cache = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache")
+        lock_path = cache / "topgrade-update" / "tray.lock"
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         handle = lock_path.open("w")
