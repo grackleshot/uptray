@@ -362,6 +362,13 @@ def test_quit_stops_running_window_before_quitting(
     calls: list[str] = []
 
     class FakeWindow:
+        def __init__(self, *, allow: bool = True) -> None:
+            self.allow = allow
+
+        def confirm_stop(self) -> bool:
+            calls.append("ask")
+            return self.allow
+
         def shutdown(self) -> None:
             calls.append("window")
 
@@ -371,8 +378,12 @@ def test_quit_stops_running_window_before_quitting(
     tray._run_window = FakeWindow()
 
     tray._quit()
+    assert calls == ["ask", "window", "quit"]
 
-    assert calls == ["window", "quit"]
+    calls.clear()
+    tray._run_window = FakeWindow(allow=False)
+    tray._quit()
+    assert calls == ["ask"]  # declined: the update keeps running, app stays up
 
 
 def _patch_check_thread(tray: Tray, monkeypatch: pytest.MonkeyPatch) -> list[int]:

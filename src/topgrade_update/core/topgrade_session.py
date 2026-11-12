@@ -43,6 +43,7 @@ __all__ = [
     "build_diagnose_prompt",
     "default_runs_dir",
     "list_run_logs",
+    "parse_idle",
     "parse_topgrade_chunk",
     "strip_ansi",
 ]
@@ -176,6 +177,7 @@ class _ParserState:
     failed_step: str | None = None
     steps: dict[str, StepStatus] = field(default_factory=dict)
     last_prompt: str | None = None
+    prompt_source: str = ""  # dangling text that raised last_prompt
     last_line: str = ""
 
 
@@ -235,13 +237,9 @@ def build_agent_command(agent: str, prompt: str) -> list[str]:
 def parse_topgrade_chunk(state: _ParserState, chunk: str) -> list[SessionEvent]:
     """Feed decoded text into *state* and return newly recognized events."""
     events: list[SessionEvent] = []
-    state.buffer += chunk
-    while True:
-        newline = state.buffer.find("\n")
-        if newline < 0:
-            break
-        line = state.buffer[:newline]
-        state.buffer = state.buffer[newline + 1 :]
+    # One split, not a slice per line: whole transcripts are parsed for history.
+    *lines, state.buffer = (state.buffer + chunk).split("\n")
+    for line in lines:
         events.extend(_parse_line(state, line))
 
     # Retry prompts often appear without a trailing newline.
@@ -249,20 +247,38 @@ def parse_topgrade_chunk(state: _ParserState, chunk: str) -> list[SessionEvent]:
         events.append(RetryPrompt(step_name=state.current_step))
         state.buffer = ""
         return events
-    # Prompts frequently dangle without a newline while awaiting input.
+    # Prompts frequently dangle without a newline while awaiting input. Yes/no
+    # brackets are unambiguous; menu-style ones wait for parse_idle, since a read
+    # can end mid-line right after "==>" (makepkg) or "[core/extra]".
     if state.buffer:
         stripped = strip_ansi(state.buffer).strip()
         question, free_text = _dangling_prompt(state, stripped)
-        if question is not None:
-            if question != state.last_prompt:
-                state.last_prompt = question
-                events.append(PromptRequest(question=question, free_text=free_text))
-        elif state.last_prompt is not None and stripped:
-            # Non-empty output that is not a dangling prompt: the pending
-            # prompt was answered (PTY echo) or superseded.
+        if question is not None and not free_text:
+            events.extend(_raise_prompt(state, question, stripped, free_text=False))
+        elif state.last_prompt is not None and stripped and stripped != state.prompt_source:
+            # New output after the prompt: it was answered (PTY echo) or superseded.
             state.last_prompt = None
             events.append(PromptCleared())
     return events
+
+
+def parse_idle(state: _ParserState) -> list[SessionEvent]:
+    """Output has paused: a dangling line that looks like a prompt is one."""
+    stripped = strip_ansi(state.buffer).strip()
+    question, free_text = _dangling_prompt(state, stripped)
+    if question is None:
+        return []
+    return _raise_prompt(state, question, stripped, free_text=free_text)
+
+
+def _raise_prompt(
+    state: _ParserState, question: str, source: str, *, free_text: bool
+) -> list[SessionEvent]:
+    if question == state.last_prompt:
+        return []
+    state.last_prompt = question
+    state.prompt_source = source
+    return [PromptRequest(question=question, free_text=free_text)]
 
 
 def _dangling_prompt(state: _ParserState, text: str) -> tuple[str | None, bool]:
@@ -552,6 +568,8 @@ class TopgradeSession:
                 except (OSError, ValueError):
                     break
                 if not ready:
+                    for event in parse_idle(self._parser):
+                        self._emit(event)
                     if self._wait_nonblocking() is not None and not self._fd_has_data(
                         master_fd
                     ):

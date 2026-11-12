@@ -727,6 +727,9 @@ class Tray(QSystemTrayIcon):
             window.shutdown()
 
     def _quit(self) -> None:
+        window = getattr(self, "_run_window", None)
+        if window is not None and not window.confirm_stop():
+            return
         # Qt 6 aborts quit() when a window ignores its close event, and a
         # running RunWindow does; stop it explicitly first.
         self._stop_run_window()

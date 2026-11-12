@@ -129,3 +129,11 @@ def test_autostart_toggle_applies_on_accept(qapp, tmp_path, monkeypatch) -> None
     dialog._autostart.setChecked(False)
     dialog.accept()
     assert not autostart.AUTOSTART_FILE.exists()
+
+
+def test_settings_keeps_hand_edited_interval_unless_changed(qapp) -> None:  # noqa: ANN001
+    dialog = SettingsDialog(Config(check_interval=450))
+    assert dialog.get_config().check_interval == 450
+
+    dialog._interval.setValue(10)
+    assert dialog.get_config().check_interval == 600

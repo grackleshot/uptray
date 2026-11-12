@@ -199,6 +199,7 @@ class SettingsDialog(QDialog):
 
     def _populate(self, cfg: Config) -> None:
         """Fill every widget from cfg (also used by Restore Defaults)."""
+        self._interval_s = cfg.check_interval
         self._interval.setValue(cfg.check_interval // 60)
         self._terminals.setText(", ".join(cfg.terminals))
         for name, box in self._source_boxes.items():
@@ -235,6 +236,12 @@ class SettingsDialog(QDialog):
                 QMessageBox.warning(self, "Autostart", f"Could not change autostart: {exc}")
         super().accept()
 
+    def _interval_seconds(self) -> int:
+        # Keep a hand-edited value that isn't whole minutes unless the user changed it.
+        if self._interval.value() == self._interval_s // 60:
+            return self._interval_s
+        return self._interval.value() * 60
+
     def get_config(self) -> Config:
         """Build a new Config from the current widget state."""
         terminals = [term.strip() for term in self._terminals.text().split(",")]
@@ -252,7 +259,7 @@ class SettingsDialog(QDialog):
                 continue
             custom_commands.append(replace(custom, enabled=custom_box.isChecked()))
         return Config(
-            check_interval=self._interval.value() * 60,
+            check_interval=self._interval_seconds(),
             terminals=[term for term in terminals if term],
             sources=sources,
             notifications=replace(

@@ -20,6 +20,7 @@ from topgrade_update.core.topgrade_session import (
     _ParserState,
     build_diagnose_prompt,
     list_run_logs,
+    parse_idle,
     parse_topgrade_chunk,
     strip_ansi,
 )
@@ -294,9 +295,27 @@ def test_parser_new_prompt_supersedes_previous() -> None:
 def test_parser_flags_prompts_that_need_typed_answers(
     chunk: str, question: str, free_text: bool
 ) -> None:
-    events = parse_topgrade_chunk(_ParserState(), chunk)
+    state = _ParserState()
+    events = parse_topgrade_chunk(state, chunk) + parse_idle(state)
     prompts = [e for e in events if isinstance(e, PromptRequest)]
     assert [(p.question, p.free_text) for p in prompts] == [(question, free_text)]
+
+
+def test_menu_prompt_waits_for_idle_so_split_reads_are_not_prompts() -> None:
+    state = _ParserState()
+    first = parse_topgrade_chunk(state, "building\n==>")
+    rest = parse_topgrade_chunk(state, " Making package: foo 1.0\n")
+    assert not any(isinstance(e, (PromptRequest, PromptCleared)) for e in first + rest)
+
+
+def test_terminal_control_output_does_not_clear_pending_menu_prompt() -> None:
+    state = _ParserState()
+    parse_topgrade_chunk(state, "Enter a number (default=1): ")
+    assert parse_idle(state)
+
+    events = parse_topgrade_chunk(state, "\x1b[?25h") + parse_idle(state)
+
+    assert events == []
 
 
 def test_parser_ignores_dangling_non_prompt_output() -> None:

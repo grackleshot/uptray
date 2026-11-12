@@ -314,3 +314,28 @@ def test_typed_prompt_answer_is_sent_to_terminal(qapp, tmp_path) -> None:  # noq
     assert written == ["s\n"]
     assert window._prompt_bar.isHidden()
     window.close()
+
+
+def test_prompt_brings_back_a_hidden_window(qapp, tmp_path) -> None:  # noqa: ANN001
+    from topgrade_update.core.topgrade_session import PromptRequest
+
+    window = RunWindow(
+        Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"
+    )
+    assert window.isHidden()
+
+    window._on_session_event(PromptRequest(question="Continue? [y/N]:"))
+
+    assert window.isVisible()
+    window.shutdown()
+
+
+def test_window_closed_before_start_never_launches(qapp, qtbot, tmp_path) -> None:  # noqa: ANN001
+    window = RunWindow(
+        Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"
+    )
+
+    window.close()
+    qtbot.wait(50)
+
+    assert window._session is None

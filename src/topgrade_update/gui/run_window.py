@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import html
 import shutil
 import time
@@ -54,6 +53,7 @@ from topgrade_update.gui.icons import (
     spinner_pixmaps,
     status_pixmap,
 )
+from topgrade_update.gui.run_prompt_bar import build_prompt_bar
 from topgrade_update.gui.run_simple_page import build_simple_page
 from topgrade_update.gui.style import (
     apply_theme,
@@ -107,6 +107,14 @@ class RunWindow(QMainWindow):
     _activity_label: QLabel
     _hero_actions: QWidget
     _btn_try_again: QPushButton
+    # Built by run_prompt_bar.build_prompt_bar.
+    _prompt_bar: QFrame
+    _prompt_label: QLabel
+    _btn_prompt_yes: QPushButton
+    _btn_prompt_no: QPushButton
+    _btn_prompt_term: QPushButton
+    _prompt_input: QLineEdit
+    _btn_prompt_send: QPushButton
 
     def __init__(
         self,
@@ -290,45 +298,7 @@ class RunWindow(QMainWindow):
         self._retry_bar.hide()
         layout.addWidget(self._retry_bar)
 
-        # --- Interactive prompt strip --------------------------------------
-        # Surfaced whenever the running command asks a [Y/n]-style question.
-        self._prompt_bar = QFrame()
-        self._prompt_bar.setStyleSheet(
-            f"QFrame {{ background: {tokens['warning_bg']};"
-            f" border: 1px solid {tokens['warning']}; border-radius: 8px; }}"
-            "QLabel { background: transparent; border: none; }"
-            "QPushButton { background: transparent; }"
-        )
-        prompt_layout = QHBoxLayout(self._prompt_bar)
-        prompt_layout.setContentsMargins(12, 8, 12, 8)
-        prompt_layout.setSpacing(8)
-        prompt_icon = QLabel()
-        prompt_icon.setPixmap(status_pixmap("warning", ICON_SM))
-        prompt_layout.addWidget(prompt_icon)
-        self._prompt_label = QLabel("")
-        self._prompt_label.setWordWrap(True)
-        prompt_layout.addWidget(self._prompt_label, 1)
-        self._btn_prompt_yes = QPushButton("Yes")
-        self._btn_prompt_no = QPushButton("No")
-        self._btn_prompt_term = QPushButton("Answer in terminal")
-        self._btn_prompt_yes.clicked.connect(lambda: self._answer_prompt("y"))
-        self._btn_prompt_no.clicked.connect(lambda: self._answer_prompt("n"))
-        self._btn_prompt_term.clicked.connect(
-            functools.partial(self._answer_prompt, None)
-        )
-        self._prompt_input = QLineEdit()
-        self._prompt_input.setPlaceholderText("Type your answer…")
-        self._prompt_input.setMaximumWidth(220)
-        self._prompt_input.returnPressed.connect(self._send_prompt_text)
-        self._btn_prompt_send = QPushButton("Send")
-        self._btn_prompt_send.clicked.connect(self._send_prompt_text)
-        prompt_layout.addWidget(self._btn_prompt_yes)
-        prompt_layout.addWidget(self._btn_prompt_no)
-        prompt_layout.addWidget(self._prompt_input)
-        prompt_layout.addWidget(self._btn_prompt_send)
-        prompt_layout.addWidget(self._btn_prompt_term)
-        self._prompt_bar.hide()
-        layout.addWidget(self._prompt_bar)
+        layout.addWidget(build_prompt_bar(self, tokens))
 
         # --- Diagnose drawer ---------------------------------------------
         self._diagnose = DiagnosePanel(cfg, self._runs_dir, self._diagnose_prompt)
@@ -372,6 +342,8 @@ class RunWindow(QMainWindow):
             self._term.focus_terminal()
 
     def _start(self) -> None:
+        if self._quitting:  # closed before the queued start ran
+            return
         if self._command_override is not None:
             command = list(self._command_override)
         else:
@@ -520,8 +492,10 @@ class RunWindow(QMainWindow):
             self._handle_askpass(event)
             return
         if isinstance(event, PromptRequest):
-            self._show_prompt(event.question, buttons="text" if event.free_text else "yesno")
             self._notify_if_unseen("Topgrade needs your answer", event.question)
+            if self.isHidden():  # the run is blocked on this answer
+                self.showNormal()
+            self._show_prompt(event.question, buttons="text" if event.free_text else "yesno")
             return
         if isinstance(event, PromptCleared):
             self._prompt_bar.hide()
@@ -633,17 +607,23 @@ class RunWindow(QMainWindow):
         if self._session is not None:
             self._session.resize(rows, cols)
 
+    def confirm_stop(self) -> bool:
+        """Ask before stopping a running update; True when it may be stopped."""
+        if not self.is_active:
+            return True
+        answer = QMessageBox.question(
+            self,
+            "Stop the update?",
+            "Stopping topgrade part-way can leave packages half-installed.\n\n"
+            "Stop it anyway?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _cancel(self) -> None:
         if self._session is not None and self._session.running:
-            answer = QMessageBox.question(
-                self,
-                "Stop the update?",
-                "Stopping topgrade part-way can leave packages half-installed.\n\n"
-                "Stop it anyway?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No,
-            )
-            if answer != QMessageBox.StandardButton.Yes or not self.is_active:
+            if not self.confirm_stop() or not self.is_active:
                 return
             self._state_label.setText("Cancelling…")
             self._session.cancel()
@@ -781,12 +761,14 @@ class RunWindow(QMainWindow):
             event.ignore()
             self.hide()
             if not self._background_notice_sent:
+                # Feedback on the user's own action, so not muted by the setting.
                 self._background_notice_sent = True
-                self._notify_if_unseen(
+                send_message(
                     "Still updating in the background",
                     "Choose Run Topgrade in the tray to bring the window back.",
                 )
             return
+        self._quitting = True  # closed for good: a queued _start must not run
         if self._session is not None and self._session.running:
             self._session.cancel()
             self._session.wait(timeout=2)
