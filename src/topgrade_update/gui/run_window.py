@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QFontDatabase, QTextCursor
+from PySide6.QtGui import QCloseEvent, QFontDatabase, QKeyEvent, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 
 from topgrade_update.core.config import save_run_mode
 from topgrade_update.core.logging import get_logger
+from topgrade_update.core.notifications import send_message
 from topgrade_update.core.topgrade_session import (
     AskpassRequest,
     OutputChunk,
@@ -123,6 +124,8 @@ class RunWindow(QMainWindow):
         self._retry_visible = False
         self._activity_line = ""
         self._state_kind: str | None = None
+        self._quitting = False
+        self._background_notice_sent = False
 
         self.setWindowTitle(title or "Topgrade Update — Run")
         self.setMinimumSize(840, 560)
@@ -169,6 +172,8 @@ class RunWindow(QMainWindow):
         self._mode_group.addButton(self._mode_verbose)
         self._mode_simple.clicked.connect(lambda: self._set_mode("simple"))
         self._mode_verbose.clicked.connect(lambda: self._set_mode("verbose"))
+        self._mode_simple.setShortcut(QKeySequence("Ctrl+1"))
+        self._mode_verbose.setShortcut(QKeySequence("Ctrl+2"))
         mode_frame = QFrame()
         mode_frame.setStyleSheet(
             f"QFrame {{"
@@ -190,8 +195,8 @@ class RunWindow(QMainWindow):
         mode_layout.addWidget(self._mode_simple)
         mode_layout.addWidget(self._mode_verbose)
         mode_frame.setToolTip(
-            "Simple: friendly progress anyone can follow.\n"
-            "Verbose: full terminal output with every detail."
+            "Simple (Ctrl+1): friendly progress anyone can follow.\n"
+            "Verbose (Ctrl+2): full terminal output with every detail."
         )
         header.addWidget(mode_frame)
 
@@ -561,8 +566,8 @@ class RunWindow(QMainWindow):
             self._handle_askpass(event)
             return
         if isinstance(event, PromptRequest):
-            self._prompt_label.setText(event.question)
-            self._prompt_bar.show()
+            self._show_prompt(event.question)
+            self._notify_if_unseen("Topgrade needs your answer", event.question)
             return
         if isinstance(event, PromptCleared):
             self._prompt_bar.hide()
@@ -611,13 +616,37 @@ class RunWindow(QMainWindow):
                 tooltip = f"{tooltip}\n{step.latest_line}"
             item.setToolTip(tooltip)
 
+    def _show_prompt(self, text: str, *, buttons: str = "yesno") -> None:
+        """Show the prompt strip; buttons is "yesno" or "none" (announcement only)."""
+        self._prompt_label.setText(text)
+        yesno = buttons == "yesno"
+        self._btn_prompt_yes.setVisible(yesno)
+        self._btn_prompt_no.setVisible(yesno)
+        self._btn_prompt_term.setVisible(buttons != "none")
+        self._prompt_bar.show()
+
+    def _notify_if_unseen(self, summary: str, body: str) -> None:
+        """Desktop-notify only when the user can't see this window right now."""
+        if not self._cfg.notifications.enabled:
+            return
+        if self.isVisible() and self.isActiveWindow():
+            return
+        send_message(summary, body)
+
     def _handle_askpass(self, event: AskpassRequest) -> None:
+        step = self._current_step
+        notice = f"Password required for “{step}”" if step else "Password required"
+        self._notify_if_unseen(notice, event.prompt)
+        if self.isHidden():
+            self.showNormal()
+        self._show_prompt(notice, buttons="none")
         password, ok = QInputDialog.getText(
             self,
             "Authentication required",
             event.prompt,
             QLineEdit.EchoMode.Password,
         )
+        self._prompt_bar.hide()
         if self._session is not None:
             self._session.reply_askpass(event.request_id, password if ok else None)
 
@@ -646,6 +675,16 @@ class RunWindow(QMainWindow):
 
     def _cancel(self) -> None:
         if self._session is not None and self._session.running:
+            answer = QMessageBox.question(
+                self,
+                "Stop the update?",
+                "Stopping topgrade part-way can leave packages half-installed.\n\n"
+                "Stop it anyway?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes or not self.is_active:
+                return
             self._state_label.setText("Cancelling…")
             self._session.cancel()
         else:
@@ -677,6 +716,7 @@ class RunWindow(QMainWindow):
             self._hero_actions.hide()
             self._btn_cancel.setDefault(True)
             set_primary(self._btn_cancel)
+            self._notify_if_unseen("Update finished", f"Up to date · finished in {elapsed}")
         else:
             # A determinate fraction would imply a known total; drop the bar.
             self._progress.hide()
@@ -689,6 +729,7 @@ class RunWindow(QMainWindow):
             # Keyboard default lands on Diagnose; the hero's "Try again" stays
             # the single visually-primary action.
             self._btn_diagnose.setDefault(True)
+            self._notify_if_unseen("Update failed", f"{detail}\nDetails in Update History.")
         self.finished.emit(event.returncode)
         if self._on_finished is not None:
             self._on_finished(event.returncode)
@@ -781,7 +822,6 @@ class RunWindow(QMainWindow):
         import subprocess
 
         from topgrade_update.core.checkers import find_terminal
-        from topgrade_update.core.notifications import send_message
 
         if self._agent_combo.count() == 0:
             return
@@ -801,7 +841,30 @@ class RunWindow(QMainWindow):
         except OSError as exc:
             send_message("Could not launch agent", str(exc))
 
+    def shutdown(self) -> None:
+        """Stop any running session and close for real (used on app quit)."""
+        self._quitting = True
+        self.close()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # Not a QShortcut: the terminal (vim, pacdiff) must still receive Esc.
+        if event.key() == Qt.Key.Key_Escape and not self.is_active:
+            self.close()
+            return
+        super().keyPressEvent(event)
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        if self.is_active and not self._quitting:
+            # Closing must never kill an upgrade mid-transaction: keep it running.
+            event.ignore()
+            self.hide()
+            if not self._background_notice_sent:
+                self._background_notice_sent = True
+                self._notify_if_unseen(
+                    "Still updating in the background",
+                    "Choose Run Topgrade in the tray to bring the window back.",
+                )
+            return
         if self._session is not None and self._session.running:
             self._session.cancel()
             self._session.wait(timeout=2)

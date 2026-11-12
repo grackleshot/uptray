@@ -309,7 +309,7 @@ class Tray(QSystemTrayIcon):
         snooze_menu.addAction("Snooze until tomorrow", lambda: self._snooze(24))
         snooze_menu.addAction("Cancel snooze", lambda: self._snooze(None))
         self._menu.addSeparator()
-        self._add_action("Quit", "application-exit", QApplication.quit)
+        self._add_action("Quit", "application-exit", self._quit)
 
     def _add_action(self, label: str, icon_name: str, slot: Callable[[], None]) -> QAction:
         """Add a menu action with a themed icon when the platform provides one."""
@@ -760,7 +760,9 @@ class Tray(QSystemTrayIcon):
         # Reuse only while a session is still running; finished windows must not
         # block a new dry-run/update request.
         existing = getattr(self, "_run_window", None)
-        if existing is not None and existing.isVisible() and existing.is_active:
+        if existing is not None and existing.is_active:
+            # A running window may be hidden (closed mid-run); bring it back.
+            existing.showNormal()
             existing.raise_()
             existing.activateWindow()
             return
@@ -775,8 +777,20 @@ class Tray(QSystemTrayIcon):
         self._run_window = window
         window.show()
 
+    def _stop_run_window(self) -> None:
+        window = getattr(self, "_run_window", None)
+        if window is not None:
+            window.shutdown()
+
+    def _quit(self) -> None:
+        # Qt 6 aborts quit() when a window ignores its close event, and a
+        # running RunWindow does; stop it explicitly first.
+        self._stop_run_window()
+        QApplication.quit()
+
     def shutdown(self) -> None:
         """Release background threads and the notification DBus connection."""
+        self._stop_run_window()
         self._persist_state()
         self._resume_stop.set()
         if self._resume_thread.is_alive():

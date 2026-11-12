@@ -122,3 +122,114 @@ def test_diagnose_drawer_opens_resizable(
     window._toggle_diagnose()
     assert window._diagnose.isHidden()
     window.close()
+
+
+def _slow_command(tmp_path: Path) -> list[str]:
+    script = tmp_path / "slow.sh"
+    script.write_text(
+        "#!/bin/sh\nprintf '\\n── 12:00:00 - Slow ──────────\\n'\nsleep 30\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    return ["/bin/sh", str(script)]
+
+
+def _running_window(qtbot, tmp_path: Path) -> RunWindow:  # noqa: ANN001
+    window = RunWindow(
+        Config(run_mode="simple"),
+        command=_slow_command(tmp_path),
+        runs_dir=tmp_path / "runs",
+    )
+    window.show()
+    qtbot.waitUntil(lambda: window.is_active, timeout=5000)
+    return window
+
+
+def test_close_while_running_hides_and_keeps_running(
+    qapp, qtbot, tmp_path, sent_messages  # noqa: ANN001
+) -> None:
+    window = _running_window(qtbot, tmp_path)
+
+    window.close()
+    window.close()
+
+    assert window.isHidden()
+    assert window.is_active
+    assert [summary for summary, _ in sent_messages] == ["Still updating in the background"]
+    window.shutdown()
+    assert not window.is_active
+
+
+def test_cancel_declined_keeps_update_running(
+    qapp, qtbot, tmp_path, monkeypatch  # noqa: ANN001
+) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    window = _running_window(qtbot, tmp_path)
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.No
+    )
+
+    window._cancel()
+
+    assert window.is_active
+    window.shutdown()
+
+
+def test_escape_closes_only_when_finished(qapp, qtbot, tmp_path) -> None:  # noqa: ANN001
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    running = _running_window(qtbot, tmp_path)
+    QTest.keyClick(running, Qt.Key.Key_Escape)
+    assert running.isVisible()
+    running.shutdown()
+
+    done = RunWindow(
+        Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"
+    )
+    done.show()
+    qtbot.waitUntil(lambda: done._returncode is not None, timeout=5000)
+    QTest.keyClick(done, Qt.Key.Key_Escape)
+    assert not done.isVisible()
+
+
+def test_hidden_window_notifies_once_on_finish(
+    qapp, qtbot, tmp_path, sent_messages  # noqa: ANN001
+) -> None:
+    window = RunWindow(
+        Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"
+    )
+
+    qtbot.waitUntil(lambda: window._returncode is not None, timeout=5000)
+
+    assert [summary for summary, _ in sent_messages] == ["Update finished"]
+    window.close()
+
+
+def test_askpass_is_announced_in_prompt_bar(
+    qapp, tmp_path, monkeypatch  # noqa: ANN001
+) -> None:
+    from PySide6.QtWidgets import QInputDialog
+
+    from topgrade_update.core.topgrade_session import AskpassRequest
+
+    window = RunWindow(
+        Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"
+    )
+    seen: dict[str, object] = {}
+
+    def fake_get_text(*_a: object, **_k: object) -> tuple[str, bool]:
+        seen["text"] = window._prompt_label.text()
+        seen["bar"] = not window._prompt_bar.isHidden()
+        seen["yes"] = not window._btn_prompt_yes.isHidden()
+        return ("", False)
+
+    monkeypatch.setattr(QInputDialog, "getText", fake_get_text)
+    window._current_step = "System update"
+
+    window._handle_askpass(AskpassRequest(prompt="[sudo] password", request_id=1))
+
+    assert seen == {"text": "Password required for “System update”", "bar": True, "yes": False}
+    assert window._prompt_bar.isHidden()
+    window.shutdown()

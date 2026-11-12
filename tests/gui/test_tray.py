@@ -323,3 +323,53 @@ def test_open_run_window_starts_new_run_after_finished(
     tray._run_window = FakeWindow()
     tray._open_run_window([])
     assert len(created) == 2
+
+
+def test_open_run_window_reshows_hidden_running_window(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    created: list[object] = []
+
+    class FakeWindow:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            self.is_active = True
+            self.reshown = False
+            created.append(self)
+
+        def showNormal(self) -> None:  # noqa: N802
+            self.reshown = True
+
+        def raise_(self) -> None:
+            return None
+
+        def activateWindow(self) -> None:  # noqa: N802
+            return None
+
+    monkeypatch.setattr("topgrade_update.gui.tray.RunWindow", FakeWindow)
+    tray._run_window = FakeWindow()
+
+    tray._open_run_window([])
+
+    assert len(created) == 1
+    assert created[0].reshown  # type: ignore[attr-defined]
+
+
+def test_quit_stops_running_window_before_quitting(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    class FakeWindow:
+        def shutdown(self) -> None:
+            calls.append("window")
+
+    monkeypatch.setattr(
+        "topgrade_update.gui.tray.QApplication.quit", lambda: calls.append("quit")
+    )
+    tray._run_window = FakeWindow()
+
+    tray._quit()
+
+    assert calls == ["window", "quit"]
