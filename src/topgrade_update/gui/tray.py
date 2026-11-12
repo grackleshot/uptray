@@ -773,6 +773,8 @@ class Tray(QSystemTrayIcon):
             extra_args=extra_args,
             title=title,
             on_finished=lambda _code: QTimer.singleShot(500, lambda: self._start_check(force=True)),
+            # Only shown after a successful --dry-run preview.
+            on_run_for_real=self._run_topgrade,
         )
         self._run_window = window
         window.show()

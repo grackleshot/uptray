@@ -276,3 +276,39 @@ def test_parser_new_prompt_supersedes_previous() -> None:
         event.question for event in events if isinstance(event, PromptRequest)
     ]
     assert questions == ["Clean cache too? [y/N]:"]
+
+
+@pytest.mark.parametrize(
+    ("chunk", "question", "free_text"),
+    [
+        (":: Proceed with installation? [Y/n] ", ":: Proceed with installation? [Y/n]", False),
+        (
+            "(V)iew, (S)kip, (R)emove pacnew, (O)verwrite with pacnew, (Q)uit: [v/s/r/o/q] ",
+            "(V)iew, (S)kip, (R)emove pacnew, (O)verwrite with pacnew, (Q)uit: [v/s/r/o/q]",
+            True,
+        ),
+        ("Enter a number (default=1): ", "Enter a number (default=1):", True),
+        ("==> [N]one [A]ll [Ab]ort\n==> ", "==> [N]one [A]ll [Ab]ort", True),
+    ],
+)
+def test_parser_flags_prompts_that_need_typed_answers(
+    chunk: str, question: str, free_text: bool
+) -> None:
+    events = parse_topgrade_chunk(_ParserState(), chunk)
+    prompts = [e for e in events if isinstance(e, PromptRequest)]
+    assert [(p.question, p.free_text) for p in prompts] == [(question, free_text)]
+
+
+def test_parser_ignores_dangling_non_prompt_output() -> None:
+    events = parse_topgrade_chunk(_ParserState(), "compiling foo [release]")
+    assert not any(isinstance(e, PromptRequest) for e in events)
+
+
+def test_diagnose_prompt_includes_reason_when_known(tmp_path: Path) -> None:
+    prompt = build_diagnose_prompt(
+        returncode=1, failed_step="npm", log_path=tmp_path / "x.log", reason="EACCES"
+    )
+    assert "EACCES" in prompt
+    assert "Reason" not in build_diagnose_prompt(
+        returncode=1, failed_step="npm", log_path=tmp_path / "x.log"
+    )

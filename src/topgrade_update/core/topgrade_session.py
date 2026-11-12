@@ -68,6 +68,9 @@ _RETRY_RE = re.compile(re.escape(RETRY_PROMPT))
 # commands: paru, pacdiff, maintainer scripts, ...). Anything between the
 # brackets may decorate y/n (e.g. [yes/no], [Y/n/?]).
 _PROMPT_RE = re.compile(r"\[[^\]]*[Yy][^\]]*/[^\]]*[Nn][^\]]*\]")
+# Prompts that need a typed answer, matched only on a line still awaiting input:
+# pacdiff "...: [v/s/r/o/q]", pacman "Enter a number (default=1):", paru/yay "==>".
+_MENU_RE = re.compile(r"\[(?:\w+/)+\w+\]\s*:?$|Enter a (?:selection|number)\b.*:$|^==>$")
 _AGENT_COMMANDS: dict[str, tuple[str, ...]] = {
     "claude": ("claude",),
     "codex": ("codex",),
@@ -124,13 +127,15 @@ class AskpassRequest:
 
 @dataclass(frozen=True)
 class PromptRequest:
-    """The running command asked the user a yes/no question.
+    """The running command asked the user a question.
 
-    Detected from the standard ``[Y/n]``-style bracket convention in the
-    PTY output. One event per unique question until output resumes.
+    Yes/no questions follow the ``[Y/n]`` bracket convention; ``free_text``
+    marks menu-style prompts that need a typed answer. One event per unique
+    question until output resumes.
     """
 
     question: str
+    free_text: bool = False
     kind: SessionEventKind = SessionEventKind.PROMPT
 
 
@@ -171,6 +176,7 @@ class _ParserState:
     failed_step: str | None = None
     steps: dict[str, StepStatus] = field(default_factory=dict)
     last_prompt: str | None = None
+    last_line: str = ""
 
 
 def strip_ansi(text: str) -> str:
@@ -205,13 +211,15 @@ def build_diagnose_prompt(
     returncode: int | None,
     failed_step: str | None,
     log_path: Path,
+    reason: str | None = None,
 ) -> str:
     """Build the seed prompt for an embedded diagnose agent session."""
     step = failed_step or "unknown step"
     code = "unknown" if returncode is None else str(returncode)
+    because = f"Reason reported by topgrade: {reason}. " if reason else ""
     return (
         "A topgrade system update failed inside topgrade-update. "
-        f"Failed step: {step}. Exit code: {code}. "
+        f"Failed step: {step}. Exit code: {code}. {because}"
         f"Full transcript: {log_path}. "
         "Please diagnose the failure and propose the safest fix."
     )
@@ -241,21 +249,35 @@ def parse_topgrade_chunk(state: _ParserState, chunk: str) -> list[SessionEvent]:
         events.append(RetryPrompt(step_name=state.current_step))
         state.buffer = ""
         return events
-    # Yes/no prompts frequently dangle without a newline while awaiting input.
+    # Prompts frequently dangle without a newline while awaiting input.
     if state.buffer:
         stripped = strip_ansi(state.buffer).strip()
-        match = _PROMPT_RE.search(stripped) if stripped else None
-        if match is not None and not _prompt_answer_tail(stripped, match):
-            question = stripped
+        question, free_text = _dangling_prompt(state, stripped)
+        if question is not None:
             if question != state.last_prompt:
                 state.last_prompt = question
-                events.append(PromptRequest(question=question))
+                events.append(PromptRequest(question=question, free_text=free_text))
         elif state.last_prompt is not None and stripped:
             # Non-empty output that is not a dangling prompt: the pending
             # prompt was answered (PTY echo) or superseded.
             state.last_prompt = None
             events.append(PromptCleared())
     return events
+
+
+def _dangling_prompt(state: _ParserState, text: str) -> tuple[str | None, bool]:
+    """Return (question, free_text) when *text* is a prompt awaiting input."""
+    if not text:
+        return None, False
+    match = _PROMPT_RE.search(text)
+    if match is not None:  # yes/no wins over menu syntax
+        return (None, False) if _prompt_answer_tail(text, match) else (text, False)
+    if _MENU_RE.search(text):
+        # A bare "==>" (paru/yay) only makes sense with the menu line above it.
+        if text == "==>" and state.last_line:
+            return state.last_line, True
+        return text, True
+    return None, False
 
 
 def _prompt_answer_tail(line: str, match: re.Match[str]) -> str:
@@ -270,6 +292,7 @@ def _parse_line(state: _ParserState, raw_line: str) -> list[SessionEvent]:
     line = strip_ansi(raw_line).strip()
     if not line:
         return []
+    state.last_line = line
 
     events: list[SessionEvent] = []
     if _RETRY_RE.search(line):

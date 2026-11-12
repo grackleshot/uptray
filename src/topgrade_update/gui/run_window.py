@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import functools
+import html
 import shutil
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -71,6 +73,9 @@ if TYPE_CHECKING:
 
 _log = get_logger("run_window")
 
+# A step this quiet for this long gets a "no output for m:ss" hint (alive vs hung).
+SILENCE_HINT_S = 120
+
 # status -> (icon kind, human word shown next to the step name)
 _STEP_STATUS: dict[str, tuple[str, str]] = {
     "pending": ("pending", "Waiting"),
@@ -105,6 +110,7 @@ class RunWindow(QMainWindow):
         command: list[str] | None = None,
         title: str | None = None,
         on_finished: Callable[[int], None] | None = None,
+        on_run_for_real: Callable[[], None] | None = None,
         runs_dir: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
@@ -115,6 +121,9 @@ class RunWindow(QMainWindow):
         self._extra_args = list(extra_args or [])
         self._command_override = command
         self._on_finished = on_finished
+        self._on_run_for_real = on_run_for_real
+        self._is_dry_run = "--dry-run" in self._extra_args
+        self._last_output = time.monotonic()
         self._session: TopgradeSession | None = None
         self._agent_session: TopgradeSession | None = None
         self._steps: dict[str, StepEvent] = {}
@@ -211,8 +220,13 @@ class RunWindow(QMainWindow):
         self._btn_cancel.clicked.connect(self._cancel)
         self._btn_diagnose = QPushButton("Diagnose")
         self._btn_diagnose.clicked.connect(self._toggle_diagnose)
+        self._btn_run_real = QPushButton("Run for real")
+        self._btn_run_real.setToolTip("The preview looked good: run the actual update")
+        self._btn_run_real.clicked.connect(self._run_for_real)
+        self._btn_run_real.hide()
         header.addWidget(self._btn_review)
         header.addWidget(self._btn_diagnose)
+        header.addWidget(self._btn_run_real)
         header.addWidget(self._btn_cancel)
         layout.addLayout(header)
 
@@ -343,8 +357,16 @@ class RunWindow(QMainWindow):
         self._btn_prompt_term.clicked.connect(
             functools.partial(self._answer_prompt, None)
         )
+        self._prompt_input = QLineEdit()
+        self._prompt_input.setPlaceholderText("Type your answer…")
+        self._prompt_input.setMaximumWidth(220)
+        self._prompt_input.returnPressed.connect(self._send_prompt_text)
+        self._btn_prompt_send = QPushButton("Send")
+        self._btn_prompt_send.clicked.connect(self._send_prompt_text)
         prompt_layout.addWidget(self._btn_prompt_yes)
         prompt_layout.addWidget(self._btn_prompt_no)
+        prompt_layout.addWidget(self._prompt_input)
+        prompt_layout.addWidget(self._btn_prompt_send)
         prompt_layout.addWidget(self._btn_prompt_term)
         self._prompt_bar.hide()
         layout.addWidget(self._prompt_bar)
@@ -496,6 +518,7 @@ class RunWindow(QMainWindow):
         self._step_items.clear()
         self._step_list.clear()
         self._elapsed = 0
+        self._last_output = time.monotonic()
         self._activity_line = ""
         self._activity_label.setText("")
         self._progress.setRange(0, 0)
@@ -544,6 +567,9 @@ class RunWindow(QMainWindow):
         elif self._step_order:
             parts.append(f"{len(self._step_order)} steps done")
         parts.append(_format_elapsed(self._elapsed))
+        silent = int(time.monotonic() - self._last_output)
+        if self._current_step is not None and silent >= SILENCE_HINT_S:
+            parts.append(f"no output for {_format_elapsed(silent)}")
         self._set_state("running", "Updating your computer…", " · ".join(parts))
 
     def _refresh_progress(self) -> None:
@@ -571,7 +597,7 @@ class RunWindow(QMainWindow):
             self._handle_askpass(event)
             return
         if isinstance(event, PromptRequest):
-            self._show_prompt(event.question)
+            self._show_prompt(event.question, buttons="text" if event.free_text else "yesno")
             self._notify_if_unseen("Topgrade needs your answer", event.question)
             return
         if isinstance(event, PromptCleared):
@@ -581,6 +607,8 @@ class RunWindow(QMainWindow):
             self._finish(event)
 
     def _apply_step(self, event: StepEvent) -> None:
+        # Parsed lines, not raw chunks: a spinner redrawing in place is not progress.
+        self._last_output = time.monotonic()
         if event.name not in self._steps:
             self._step_order.append(event.name)
         self._steps[event.name] = event
@@ -622,13 +650,25 @@ class RunWindow(QMainWindow):
             item.setToolTip(tooltip)
 
     def _show_prompt(self, text: str, *, buttons: str = "yesno") -> None:
-        """Show the prompt strip; buttons is "yesno" or "none" (announcement only)."""
+        """Show the prompt strip; buttons: "yesno", "text" (typed answer) or "none"."""
         self._prompt_label.setText(text)
         yesno = buttons == "yesno"
+        typed = buttons == "text"
         self._btn_prompt_yes.setVisible(yesno)
         self._btn_prompt_no.setVisible(yesno)
+        self._prompt_input.setVisible(typed)
+        self._btn_prompt_send.setVisible(typed)
         self._btn_prompt_term.setVisible(buttons != "none")
         self._prompt_bar.show()
+        if typed:
+            self._prompt_input.clear()
+            self._prompt_input.setFocus()
+
+    def _send_prompt_text(self) -> None:
+        # An empty answer is meaningful: Enter accepts the prompt's default.
+        text = self._prompt_input.text()
+        self._prompt_input.clear()
+        self._answer_prompt(text)
 
     def _notify_if_unseen(self, summary: str, body: str) -> None:
         """Desktop-notify only when the user can't see this window right now."""
@@ -713,15 +753,21 @@ class RunWindow(QMainWindow):
         if event.returncode == 0:
             self._progress.setRange(0, 1)
             self._progress.setValue(1)
-            self._set_state(
-                "done",
-                "All done!",
-                f"Up to date · finished in {elapsed}",
-            )
             self._hero_actions.hide()
-            self._btn_cancel.setDefault(True)
-            set_primary(self._btn_cancel)
-            self._notify_if_unseen("Update finished", f"Up to date · finished in {elapsed}")
+            if self._is_dry_run:
+                summary = f"Nothing was changed · finished in {elapsed}"
+                self._set_state("done", "Preview complete", summary)
+            else:
+                summary = f"Up to date · finished in {elapsed}"
+                self._set_state("done", "All done!", summary)
+            if self._is_dry_run and self._on_run_for_real is not None:
+                self._btn_run_real.show()
+                self._btn_run_real.setDefault(True)
+                set_primary(self._btn_run_real)
+            else:
+                self._btn_cancel.setDefault(True)
+                set_primary(self._btn_cancel)
+            self._notify_if_unseen("Update finished", summary)
         else:
             # A determinate fraction would imply a known total; drop the bar.
             self._progress.hide()
@@ -729,7 +775,12 @@ class RunWindow(QMainWindow):
             detail = f"Exit code {event.returncode} · {elapsed}"
             if failed:
                 detail = f"“{failed}” failed · {detail}"
-            self._set_state("failed", "Something went wrong", detail)
+            reason = self._failure_reason()
+            if reason:
+                detail = f"{detail}\n{reason}"
+            self._set_state(
+                "failed", "Something went wrong", html.escape(detail).replace("\n", "<br>")
+            )
             self._hero_actions.show()
             # Keyboard default lands on Diagnose; the hero's "Try again" stays
             # the single visually-primary action.
@@ -738,6 +789,27 @@ class RunWindow(QMainWindow):
         self.finished.emit(event.returncode)
         if self._on_finished is not None:
             self._on_finished(event.returncode)
+
+    def _failure_reason(self, *, full: bool = False) -> str | None:
+        """topgrade's reason for the failed step; first line (≤80 chars) unless full."""
+        step = self._steps.get(self._failed_step or "")
+        reason = step.reason if step is not None else None
+        if not reason or full:
+            return reason
+        line = reason.splitlines()[0]
+        return line if len(line) <= 80 else line[:79] + "…"
+
+    def _diagnose_prompt(self) -> str:
+        return build_diagnose_prompt(
+            returncode=self._returncode,
+            failed_step=self._failed_step or self._current_step,
+            log_path=self._log_path or Path("."),
+            reason=self._failure_reason(full=True),
+        )
+
+    def _run_for_real(self) -> None:
+        if self._on_run_for_real is not None:
+            self._on_run_for_real()
 
     def _sweep_open_steps(self) -> None:
         """Mark steps left pending/running at exit so nothing shows 'Running…'."""
@@ -779,11 +851,7 @@ class RunWindow(QMainWindow):
             )
             return
         agent = self._agent_combo.currentText()
-        prompt = build_diagnose_prompt(
-            returncode=self._returncode,
-            failed_step=self._failed_step or self._current_step,
-            log_path=self._log_path or Path("."),
-        )
+        prompt = self._diagnose_prompt()
         try:
             command = build_agent_command(agent, prompt)
         except ValueError as exc:
@@ -834,11 +902,7 @@ class RunWindow(QMainWindow):
         if self._agent_combo.count() == 0:
             return
         agent = self._agent_combo.currentText()
-        prompt = build_diagnose_prompt(
-            returncode=self._returncode,
-            failed_step=self._failed_step or self._current_step,
-            log_path=self._log_path or Path("."),
-        )
+        prompt = self._diagnose_prompt()
         command = build_agent_command(agent, prompt)
         term, args = find_terminal(self._cfg)
         if term is None:

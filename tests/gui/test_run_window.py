@@ -18,7 +18,7 @@ def _fake_command(tmp_path: Path, *, fail: bool = False) -> list[str]:
         script.write_text(
             "#!/bin/sh\n"
             "printf '\\n── 12:00:00 - Broken ──────────\\n'\n"
-            "printf 'Broken: FAILED\\n'\n"
+            "printf 'Broken: FAILED: disk full\\n'\n"
             "exit 2\n",
             encoding="utf-8",
         )
@@ -252,3 +252,65 @@ def test_run_window_remembers_geometry_and_body_split(qapp, tmp_path) -> None:  
     assert (second.width(), second.height()) == (840, 590)
     assert abs(second._body.sizes()[0] - first._body.sizes()[0]) < 10
     second.close()
+
+
+def test_failed_run_shows_topgrade_reason(qapp, qtbot, tmp_path) -> None:  # noqa: ANN001
+    window = RunWindow(
+        Config(run_mode="simple"),
+        command=_fake_command(tmp_path, fail=True),
+        runs_dir=tmp_path / "runs",
+    )
+    qtbot.waitUntil(lambda: window._returncode is not None, timeout=5000)
+
+    assert "disk full" in window._subtitle_label.text()
+    assert "disk full" in window._diagnose_prompt()
+    window.close()
+
+
+def test_dry_run_offers_run_for_real(qapp, qtbot, tmp_path) -> None:  # noqa: ANN001
+    calls: list[str] = []
+    window = RunWindow(
+        Config(run_mode="simple"),
+        command=_fake_command(tmp_path),
+        extra_args=["--dry-run"],
+        on_run_for_real=lambda: calls.append("real"),
+        runs_dir=tmp_path / "runs",
+    )
+    qtbot.waitUntil(lambda: window._returncode is not None, timeout=5000)
+
+    assert window._state_label.text() == "Preview complete"
+    assert not window._btn_run_real.isHidden()
+    window._btn_run_real.click()
+    assert calls == ["real"]
+    window.close()
+
+
+def test_silent_step_gets_no_output_hint(qapp, qtbot, tmp_path) -> None:  # noqa: ANN001
+    window = _running_window(qtbot, tmp_path)
+    qtbot.waitUntil(lambda: window._current_step == "Slow", timeout=5000)
+
+    window._last_output -= 200
+    window._refresh_subtitle()
+
+    assert "no output for 3:20" in window._subtitle_label.text()
+    window.shutdown()
+
+
+def test_typed_prompt_answer_is_sent_to_terminal(qapp, tmp_path) -> None:  # noqa: ANN001
+    from topgrade_update.core.topgrade_session import PromptRequest
+
+    window = RunWindow(
+        Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"
+    )
+    written: list[str] = []
+    window._pty_write = written.append  # type: ignore[method-assign]
+
+    window._on_session_event(PromptRequest(question="Quit: [v/s/r/o/q]", free_text=True))
+    assert not window._prompt_input.isHidden()
+    assert window._btn_prompt_yes.isHidden()
+    window._prompt_input.setText("s")
+    window._send_prompt_text()
+
+    assert written == ["s\n"]
+    assert window._prompt_bar.isHidden()
+    window.close()
