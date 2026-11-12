@@ -738,6 +738,9 @@ class Tray(QSystemTrayIcon):
     def shutdown(self) -> None:
         """Release background threads and the notification DBus connection."""
         self._stop_run_window()
+        if self._check_thread is not None and self._check_thread.isRunning():
+            # Qt aborts the process if a running QThread is destroyed at exit.
+            self._check_thread.wait(10_000)
         self._persist_state()
         self._resume_stop.set()
         if self._resume_thread.is_alive():

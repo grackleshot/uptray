@@ -469,3 +469,21 @@ def test_show_updates_opens_dialog_on_errors(
     tray._show_updates()
 
     assert len(opened) == 1
+
+
+def test_shutdown_waits_for_a_running_check(tray: Tray) -> None:
+    waited: list[int] = []
+
+    class RunningThread:
+        def isRunning(self) -> bool:  # noqa: N802
+            return True
+
+        def wait(self, ms: int) -> bool:
+            waited.append(ms)
+            return True
+
+    tray._check_thread = RunningThread()  # type: ignore[assignment]
+
+    tray.shutdown()
+
+    assert waited  # destroying a running QThread aborts the process
