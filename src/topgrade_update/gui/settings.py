@@ -11,12 +11,14 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -68,6 +70,11 @@ class SettingsDialog(QDialog):
         root = QVBoxLayout(self)
         root.setContentsMargins(16, 16, 16, 12)
         root.setSpacing(10)
+        # The cards scroll so nothing gets squeezed on short screens (e.g. 864px).
+        content = QWidget()
+        cards = QVBoxLayout(content)
+        cards.setContentsMargins(0, 0, 0, 0)
+        cards.setSpacing(10)
 
         # --- Checking for updates ----------------------------------------
         checking = QGroupBox("Checking for updates")
@@ -94,7 +101,7 @@ class SettingsDialog(QDialog):
         sources_row = QVBoxLayout()
         sources_row.setSpacing(6)
         for name in [*_SOURCE_LABELS, *sorted(set(cfg.sources) - set(_SOURCE_LABELS))]:
-            box = QCheckBox(_SOURCE_LABELS.get(name, name))
+            box = QCheckBox(_SOURCE_LABELS.get(name, name).replace("&", "&&"))
             self._source_boxes[name] = box
             sources_row.addWidget(box)
         for custom in cfg.custom_commands:
@@ -107,7 +114,7 @@ class SettingsDialog(QDialog):
         checking_form.addRow(
             "", _caption("Places to look for updates. Untick a source to skip it.")
         )
-        root.addWidget(checking)
+        cards.addWidget(checking)
 
         # --- Running updates ---------------------------------------------
         running = QGroupBox("Running updates")
@@ -125,7 +132,7 @@ class SettingsDialog(QDialog):
                 "Verbose shows the full terminal output."
             ),
         )
-        root.addWidget(running)
+        cards.addWidget(running)
 
         # --- Tray & notifications ----------------------------------------
         tray = QGroupBox("Tray && notifications")
@@ -179,7 +186,15 @@ class SettingsDialog(QDialog):
         self._autostart = QCheckBox("Start the tray applet at login")
         self._autostart.setChecked(self._autostart_initial)
         tray_form.addRow("", self._autostart)
-        root.addWidget(tray)
+        cards.addWidget(tray)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet(
+            "QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; }"
+        )
+        scroll.setWidget(content)
+        root.addWidget(scroll, 1)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Cancel
@@ -196,6 +211,9 @@ class SettingsDialog(QDialog):
         )
         root.addWidget(buttons)
         self._populate(cfg)
+        available = self.screen().availableGeometry().height()
+        wanted = content.sizeHint().height() + buttons.sizeHint().height() + 60
+        self.resize(max(540, content.sizeHint().width() + 48), min(wanted, int(available * 0.9)))
 
     def _populate(self, cfg: Config) -> None:
         """Fill every widget from cfg (also used by Restore Defaults)."""

@@ -379,7 +379,7 @@ class RunLogsPanel(QWidget):
             label = _run_label(run)
             self._list.addItem(f"● {label}" if run.path == current else label)
         self._list.currentRowChanged.connect(self._show_row)
-        body.addWidget(self._list, 1)
+        body.addWidget(self._list, 2)
         self._text = QTextEdit()
         self._text.setReadOnly(True)
         self._text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
@@ -471,7 +471,7 @@ class HistoryDialog(QDialog):
         layout.addWidget(
             _make_header(
                 "Update History",
-                "Past upgrade sessions recorded in pacman.log",
+                "Past updates: pacman’s log and your in-app runs",
             )
         )
 
