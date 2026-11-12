@@ -54,3 +54,13 @@ def test_replaces_an_enabled_old_autostart_entry(monkeypatch: pytest.MonkeyPatch
 
     assert not old_entry.exists()
     assert (autostart_dir / "uptray.desktop").is_file()
+
+
+def test_keeps_remembered_window_sizes() -> None:
+    old_config = _base("XDG_CONFIG_HOME") / "topgrade-update"
+    old_config.mkdir(parents=True)
+    (old_config / "topgrade-update.conf").write_text("[run_window]\n")
+
+    migrate_from_old_name()
+
+    assert (_base("XDG_CONFIG_HOME") / "uptray" / "uptray.conf").read_text() == "[run_window]\n"

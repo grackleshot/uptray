@@ -38,6 +38,14 @@ def migrate_from_old_name() -> list[Path]:
                 moved.append(new)
             except OSError as exc:
                 log.warning("Could not move %s to %s: %s", old, new, exc)
+    # Window sizes and splitters (QSettings) moved with the config folder under the old name.
+    old_layout = _xdg("XDG_CONFIG_HOME", ".config") / NEW_NAME / f"{OLD_NAME}.conf"
+    new_layout = old_layout.with_name(f"{NEW_NAME}.conf")
+    if old_layout.is_file() and not new_layout.exists():
+        try:
+            old_layout.rename(new_layout)
+        except OSError as exc:
+            log.warning("Could not move %s: %s", old_layout, exc)
     old_autostart = _xdg("XDG_CONFIG_HOME", ".config") / "autostart" / f"{OLD_NAME}-tray.desktop"
     if old_autostart.is_file():
         from uptray.core import autostart
