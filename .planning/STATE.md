@@ -164,5 +164,20 @@ Gotchas:
 - An intermittent crash dump at pytest exit was seen once (not reproduced in 10
   reruns).
 
-Tests: 226 passing; ruff and mypy clean.
+Review pass (code-reviewer) fixes: tray Quit now asks before stopping a
+running update; a prompt re-shows a hidden run window; menu-style prompts are
+raised only once output pauses (`parse_idle`, so a PTY read ending at "==>"
+is not a prompt); transcript parsing is linear (7 MB in ~0.1 s, was ~7 s);
+hand-edited non-minute intervals survive Save; a window closed before its
+queued start never launches.
 
+Offscreen screenshot pass (light + dark) found: Settings ~1050px tall was
+squeezed on the 1536x864 display (checkboxes clipped) -> cards now scroll;
+"Flatpak apps & runtimes" lost "&" to the mnemonic; Runs list too narrow.
+
+Not yet verified live: the real tray was not restarted (old build, pid 6732,
+had a diagnose agent running). Still to check in the real tray: close
+mid-run then reopen, Quit mid-run, a real pacdiff / paru prompt via the text
+box, Update only Flatpak, xterm.js behavior in a long hidden run.
+
+Tests: 231 passing; ruff and mypy clean.
