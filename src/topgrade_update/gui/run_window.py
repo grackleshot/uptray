@@ -4,16 +4,14 @@ from __future__ import annotations
 
 import functools
 import shutil
-from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QCloseEvent, QFontDatabase, QKeyEvent, QKeySequence, QTextCursor
+from PySide6.QtGui import QCloseEvent, QFontDatabase, QKeyEvent, QKeySequence
 from PySide6.QtWidgets import (
     QButtonGroup,
     QComboBox,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QInputDialog,
@@ -27,7 +25,6 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStackedWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -48,8 +45,8 @@ from topgrade_update.core.topgrade_session import (
     build_agent_command,
     build_diagnose_prompt,
     default_runs_dir,
-    list_run_logs,
 )
+from topgrade_update.gui.dialog import ReviewLogDialog
 from topgrade_update.gui.icons import (
     ICON_LG,
     ICON_SM,
@@ -872,80 +869,3 @@ class RunWindow(QMainWindow):
         self._end_agent()
         super().closeEvent(event)
 
-
-class ReviewLogDialog(QDialog):
-    """Browse the current run transcript and earlier saved runs."""
-
-    def __init__(
-        self,
-        current: Path | None,
-        *,
-        runs_dir: Path | None = None,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        apply_theme(self)
-        self.setWindowTitle("Topgrade Update — Logs")
-        self.setMinimumSize(760, 480)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(16, 16, 16, 12)
-        layout.setSpacing(12)
-
-        tokens = colors()
-        title = QLabel("Run logs")
-        font = title.font()
-        font.setPointSizeF(font.pointSizeF() + 4)
-        font.setBold(True)
-        title.setFont(font)
-        layout.addWidget(title)
-        subtitle = QLabel(
-            f'<span style="color:{tokens["muted"]}">'
-            "Full transcripts of past update runs</span>"
-        )
-        layout.addWidget(subtitle)
-
-        body = QHBoxLayout()
-        body.setSpacing(12)
-
-        self._list = QListWidget()
-        logs = list_run_logs(runs_dir)
-        if current is not None and current not in logs and current.is_file():
-            logs.insert(0, current)
-        self._paths = logs
-        for path in logs:
-            stamp = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-            label = f"{stamp}  {path.name}"
-            if current is not None and path == current:
-                label = f"● {label}"
-            self._list.addItem(label)
-        self._list.currentRowChanged.connect(self._show_row)
-        body.addWidget(self._list, 1)
-
-        self._text = QTextEdit()
-        self._text.setReadOnly(True)
-        self._text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        body.addWidget(self._text, 3)
-
-        layout.addLayout(body, 1)
-
-        if logs:
-            self._list.setCurrentRow(0)
-        else:
-            self._text.setPlainText("No run logs found.")
-
-        btn_close = QPushButton("Close")
-        btn_close.clicked.connect(self.close)
-        btn_row = QHBoxLayout()
-        btn_row.addStretch()
-        btn_row.addWidget(btn_close)
-        layout.addLayout(btn_row)
-
-    def _show_row(self, row: int) -> None:
-        if row < 0 or row >= len(self._paths):
-            return
-        path = self._paths[row]
-        try:
-            self._text.setPlainText(path.read_text(encoding="utf-8", errors="replace"))
-            self._text.moveCursor(QTextCursor.MoveOperation.Start)
-        except OSError as exc:
-            self._text.setPlainText(f"Could not read {path}: {exc}")

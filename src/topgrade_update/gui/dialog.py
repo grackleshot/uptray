@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase
+from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase, QTextCursor
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QFrame,
     QHBoxLayout,
@@ -16,6 +17,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QTabWidget,
     QTextEdit,
     QTreeWidget,
     QTreeWidgetItem,
@@ -24,11 +26,14 @@ from PySide6.QtWidgets import (
 )
 
 from topgrade_update.core.links import upstream_url
+from topgrade_update.core.run_history import RunSummary, list_runs
+from topgrade_update.core.topgrade_session import default_runs_dir, strip_ansi
 from topgrade_update.gui.icons import ICON_MD, ICON_SM, status_pixmap
 from topgrade_update.gui.style import apply_theme, colors, set_primary
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+    from pathlib import Path
 
     from topgrade_update.core.history import UpgradeSession
     from topgrade_update.core.maintenance import MaintenanceFinding
@@ -275,6 +280,110 @@ class UpdatesDialog(QDialog):
         self.close()
 
 
+def _format_duration(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}m {secs:02d}s" if minutes else f"{secs}s"
+
+
+def _run_label(run: RunSummary) -> str:
+    stamp = run.started.astimezone().strftime("%Y-%m-%d %H:%M")
+    label = f"{stamp} · {_format_duration(run.duration_s)} · {run.outcome}"
+    return f"{label} · {run.failed_steps[0]}" if run.failed_steps else label
+
+
+class RunLogsPanel(QWidget):
+    """Saved topgrade run transcripts: a summary list beside the log text."""
+
+    def __init__(
+        self,
+        current: Path | None = None,
+        *,
+        runs_dir: Path | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._runs_dir = runs_dir if runs_dir is not None else default_runs_dir()
+        runs = list_runs(self._runs_dir)
+        self._paths = [run.path for run in runs]
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        body = QHBoxLayout()
+        body.setSpacing(12)
+        self._list = QListWidget()
+        for run in runs:
+            label = _run_label(run)
+            self._list.addItem(f"● {label}" if run.path == current else label)
+        self._list.currentRowChanged.connect(self._show_row)
+        body.addWidget(self._list, 1)
+        self._text = QTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
+        body.addWidget(self._text, 3)
+        layout.addLayout(body, 1)
+
+        btn_folder = QPushButton("Open folder")
+        btn_folder.clicked.connect(
+            lambda: open_url(QUrl.fromLocalFile(str(self._runs_dir)).toString())
+        )
+        btn_copy = QPushButton("Copy")
+        btn_copy.clicked.connect(
+            lambda: QApplication.clipboard().setText(self._text.toPlainText())
+        )
+        row = QHBoxLayout()
+        row.addStretch()
+        row.addWidget(btn_folder)
+        row.addWidget(btn_copy)
+        layout.addLayout(row)
+
+        if runs:
+            self._list.setCurrentRow(
+                self._paths.index(current) if current in self._paths else 0
+            )
+        else:
+            self._text.setPlainText("No run logs found.")
+
+    def _show_row(self, row: int) -> None:
+        if not 0 <= row < len(self._paths):
+            return
+        path = self._paths[row]
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            self._text.setPlainText(f"Could not read {path}: {exc}")
+            return
+        self._text.setPlainText(strip_ansi(text))
+        self._text.moveCursor(QTextCursor.MoveOperation.Start)
+
+
+class ReviewLogDialog(QDialog):
+    """Browse the current run transcript and earlier saved runs."""
+
+    def __init__(
+        self,
+        current: Path | None,
+        *,
+        runs_dir: Path | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        apply_theme(self)
+        self.setWindowTitle(f"{APP_NAME} — Logs")
+        self.setMinimumSize(760, 480)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 12)
+        layout.setSpacing(12)
+        layout.addWidget(_make_header("Run logs", "Full transcripts of past update runs"))
+        self._panel = RunLogsPanel(current, runs_dir=runs_dir)
+        self._list = self._panel._list
+        layout.addWidget(self._panel, 1)
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.close)
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        btn_row.addWidget(btn_close)
+        layout.addLayout(btn_row)
+
+
 class HistoryDialog(QDialog):
     """Dialog listing recent upgrade sessions parsed from pacman.log."""
 
@@ -282,6 +391,8 @@ class HistoryDialog(QDialog):
         self,
         sessions: list[UpgradeSession],
         parent: QDialog | None = None,
+        *,
+        runs_dir: Path | None = None,
     ) -> None:
         super().__init__(parent)
         apply_theme(self)
@@ -298,6 +409,14 @@ class HistoryDialog(QDialog):
                 "Past upgrade sessions recorded in pacman.log",
             )
         )
+
+        self._tabs = QTabWidget()
+        layout.addWidget(self._tabs, 1)
+        system_tab = QWidget()
+        system_layout = QVBoxLayout(system_tab)
+        system_layout.setContentsMargins(0, 8, 0, 0)
+        self._tabs.addTab(system_tab, "System log")
+        self._tabs.addTab(RunLogsPanel(runs_dir=runs_dir), "Runs")
 
         body = QHBoxLayout()
         body.setSpacing(12)
@@ -321,7 +440,7 @@ class HistoryDialog(QDialog):
         self._detail.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         body.addWidget(self._detail, 2)
 
-        layout.addLayout(body, 1)
+        system_layout.addLayout(body, 1)
 
         if self._sessions:
             self._list.setCurrentRow(0)

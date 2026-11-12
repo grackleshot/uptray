@@ -123,3 +123,19 @@ def test_maintenance_dialog_lists_findings(qapp) -> None:  # noqa: ANN001
 
     assert "2 orphan package(s) installed" in dialog._detail.toPlainText()
     assert "foo" in dialog._detail.toPlainText()
+
+
+def test_history_dialog_has_runs_tab_with_clean_text(qapp, tmp_path) -> None:  # noqa: ANN001
+    (tmp_path / "20261105T090000Z-1-1.log").write_text(
+        "\x1b[1m── 12:00:00 - Summary ────\x1b[0m\n"
+    )
+    dialog = HistoryDialog([], runs_dir=tmp_path)
+
+    assert [dialog._tabs.tabText(i) for i in range(dialog._tabs.count())] == [
+        "System log",
+        "Runs",
+    ]
+    runs = dialog._tabs.widget(1)
+    assert runs._list.count() == 1
+    assert "Summary" in runs._text.toPlainText()
+    assert "\x1b" not in runs._text.toPlainText()

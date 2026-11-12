@@ -695,9 +695,8 @@ class Tray(QSystemTrayIcon):
     def _show_history(self) -> None:
         try:
             sessions = parse_pacman_log()
-        except OSError as exc:
-            send_message("History unavailable", str(exc))
-            return
+        except OSError:
+            sessions = []  # no pacman.log: the Runs tab is still useful
         HistoryDialog(sessions).exec()
 
     def _check_maintenance(self) -> None:
