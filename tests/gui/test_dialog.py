@@ -178,3 +178,19 @@ def test_updates_dialog_ctrl_f_focuses_filter(qapp) -> None:  # noqa: ANN001
     shortcut.activated.emit()
     assert dialog.focusWidget() is dialog._filter
     dialog.close()
+
+
+@pytest.mark.parametrize(
+    ("total", "error", "expected"),
+    [
+        (1, None, "1 update available"),
+        (3, None, "3 updates available"),
+        (0, "boom", "Some sources couldn't be checked"),
+        (0, None, "No updates available"),
+    ],
+)
+def test_updates_title(total: int, error: str | None, expected: str) -> None:
+    from topgrade_update.core.models import CheckResult
+    from topgrade_update.gui.dialog import _updates_title
+
+    assert _updates_title(total, [CheckResult(source="pacman", error=error)]) == expected

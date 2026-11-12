@@ -131,6 +131,15 @@ def _monospace() -> str:
     return QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
 
 
+def _updates_title(total: int, results: list[CheckResult]) -> str:
+    """Headline for the updates dialog, which also opens for errors or a reboot."""
+    if total:
+        return f"{total} update{'s' if total != 1 else ''} available"
+    if any(r.error is not None for r in results):
+        return "Some sources couldn't be checked"
+    return "No updates available"
+
+
 class UpdatesDialog(QDialog):
     """Dialog showing available updates grouped by source in a tree."""
 
@@ -154,7 +163,7 @@ class UpdatesDialog(QDialog):
         total = sum(len(r.updates) for r in self._results)
         counts = [f"{r.source} {len(r.updates)}" for r in self._results if r.updates]
         subtitle = " · ".join(counts) if counts else "Nothing to update right now"
-        layout.addWidget(_make_header(f"{total} updates available", subtitle))
+        layout.addWidget(_make_header(_updates_title(total, self._results), subtitle))
 
         if self._reboot_pending:
             layout.addWidget(
