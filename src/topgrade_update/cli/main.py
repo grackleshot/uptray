@@ -8,15 +8,24 @@ import os
 import shutil
 import sys
 
+from topgrade_update import __version__
 from topgrade_update.core.autostart import disable_autostart, enable_autostart
 from topgrade_update.core.checkers import check_all, total_updates
 from topgrade_update.core.config import load_config
 from topgrade_update.core.logging import setup_logging
 from topgrade_update.core.models import CheckResult, Config, SourceConfig, custom_checker_name
-from topgrade_update.core.notifications import send_notification
+from topgrade_update.core.notifications import send_message, send_notification
 from topgrade_update.core.quiet_hours import is_quiet_hours
 
 APP_NAME = "Topgrade Update"
+
+_EXIT_CODES = """\
+exit codes:
+  0  success / system is up to date
+  1  updates are available (--check), or topgrade/tray/GUI is unavailable
+  2  errors, or the check was incomplete
+  3  the tray applet is already running
+"""
 
 
 def _parse_bounded_int(value: str, *, minimum: int, maximum: int, label: str) -> int:
@@ -229,7 +238,15 @@ def main(argv: list[str] | None = None) -> int:
     """Parse arguments and dispatch to the appropriate command."""
     parser = argparse.ArgumentParser(
         prog="topgrade-update",
-        description="An interactive update notifier & applier using topgrade.",
+        description=(
+            "An interactive update notifier & applier using topgrade. "
+            "Without options, runs topgrade in this terminal."
+        ),
+        epilog=_EXIT_CODES,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}",
     )
     parser.add_argument(
         "-c", "--check", action="store_true",
@@ -272,7 +289,10 @@ def main(argv: list[str] | None = None) -> int:
         dest="terminals",
         action="append",
         type=_parse_terminal,
-        help="Override terminal priority (repeat for additional terminals)",
+        help=(
+            "Override the terminal list (repeatable); xdg-terminal-exec and "
+            "$TERMINAL, when available, take priority over it"
+        ),
     )
     parser.add_argument(
         "--enable-source", action="append", type=_parse_source_name,
@@ -374,6 +394,10 @@ def main(argv: list[str] | None = None) -> int:
             cfg = load_config()
         except (OSError, TypeError, ValueError) as exc:
             print(f"Error loading configuration: {exc}", file=sys.stderr)
+            if args.tray:  # autostarted: nobody is watching stderr
+                send_message(
+                    APP_NAME, f"Could not load the configuration: {exc}", urgency="critical"
+                )
             return 2
         _apply_cli_overrides(cfg, args, parser)
         if args.tray:

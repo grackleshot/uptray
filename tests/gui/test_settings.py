@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import topgrade_update.core.autostart as autostart
 from topgrade_update.core.models import (
     Config,
     CustomCommandConfig,
@@ -40,7 +41,7 @@ def test_settings_roundtrip_preserves_values(qapp) -> None:  # noqa: ANN001
 def test_settings_edits_apply(qapp) -> None:  # noqa: ANN001
     dialog = SettingsDialog(_sample_config())
 
-    dialog._interval.setValue(3600)
+    dialog._interval.setValue(60)
     dialog._terminals.setText("alacritty, xterm")
     dialog._notifications_sound.setChecked(True)
     dialog._quiet_start.setCurrentIndex(0)  # (off)
@@ -65,3 +66,66 @@ def test_settings_edits_apply(qapp) -> None:  # noqa: ANN001
     assert edited.custom_commands[0].enabled is False
     # Untouched tray settings survive.
     assert edited.tray.click_action == "show_updates"
+
+
+def test_all_builtin_sources_have_checkboxes(qapp) -> None:  # noqa: ANN001
+    dialog = SettingsDialog(_sample_config())
+
+    assert {"pacman", "aur", "flatpak", "firmware", "reboot"} <= set(dialog._source_boxes)
+    assert dialog._source_boxes["firmware"].isChecked()
+    dialog._source_boxes["reboot"].setChecked(False)
+    assert dialog.get_config().sources["reboot"].enabled is False
+
+
+def test_restore_defaults_repopulates(qapp) -> None:  # noqa: ANN001
+    dialog = SettingsDialog(_sample_config())
+
+    dialog._populate(Config())
+
+    assert dialog._interval.value() == Config().check_interval // 60
+    assert dialog._source_boxes["aur"].isChecked()
+    assert dialog._quiet_start.currentData() is None
+
+
+def test_interval_shown_in_minutes(qapp) -> None:  # noqa: ANN001
+    dialog = SettingsDialog(_sample_config())
+
+    assert dialog._interval.value() == 30
+    dialog._interval.setValue(45)
+    assert dialog.get_config().check_interval == 2700
+
+
+def test_quiet_hours_warning_visibility(qapp) -> None:  # noqa: ANN001
+    dialog = SettingsDialog(_sample_config())  # 23 -> 7
+    assert dialog._quiet_warning.isHidden()
+
+    dialog._quiet_end.setCurrentIndex(dialog._quiet_start.currentIndex())
+    assert not dialog._quiet_warning.isHidden()
+
+    dialog._quiet_end.setCurrentIndex(0)  # one side off
+    assert not dialog._quiet_warning.isHidden()
+
+    dialog._quiet_start.setCurrentIndex(0)  # both off
+    assert dialog._quiet_warning.isHidden()
+
+
+def test_autostart_toggle_applies_on_accept(qapp, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    dest = tmp_path / "autostart"
+    monkeypatch.setattr(autostart, "AUTOSTART_DIR", dest)
+    monkeypatch.setattr(autostart, "AUTOSTART_FILE", dest / "topgrade-update-tray.desktop")
+    dialog = SettingsDialog(_sample_config())
+    assert not dialog._autostart.isChecked()
+
+    dialog.accept()  # unchanged: nothing written
+    assert not autostart.AUTOSTART_FILE.exists()
+
+    dialog = SettingsDialog(_sample_config())
+    dialog._autostart.setChecked(True)
+    dialog.accept()
+    assert autostart.AUTOSTART_FILE.exists()
+
+    dialog = SettingsDialog(_sample_config())
+    assert dialog._autostart.isChecked()
+    dialog._autostart.setChecked(False)
+    dialog.accept()
+    assert not autostart.AUTOSTART_FILE.exists()

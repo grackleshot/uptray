@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from PySide6.QtCore import QFileSystemWatcher, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon
-from PySide6.QtWidgets import QApplication, QDialog, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystemTrayIcon
 
 from topgrade_update.core.arch_news import NewsItem, fetch_news, new_items, newest_marker
 from topgrade_update.core.checkers import check_all, find_terminal, total_updates
@@ -728,6 +728,7 @@ class Tray(QSystemTrayIcon):
             save_config(cfg)
         except OSError as exc:
             get_logger("tray").warning("Could not save configuration: %s", exc)
+            QMessageBox.warning(None, APP_NAME, f"Could not save the configuration: {exc}")
         self._timer.setInterval(cfg.check_interval * 1000)
         if not self._timer.isActive():
             self._timer.start()
@@ -833,6 +834,7 @@ def run_tray(cfg: Config | None = None) -> int:
             cfg = load_config()
         except (OSError, TypeError, ValueError) as exc:
             print(f"Error loading configuration: {exc}", file=sys.stderr)
+            send_message(APP_NAME, f"Could not load the configuration: {exc}", urgency="critical")
             return 2
     tray = Tray(cfg)
     try:

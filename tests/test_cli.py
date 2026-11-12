@@ -90,3 +90,31 @@ def test_cli_rejects_empty_terminal_name(monkeypatch) -> None:
 
     with pytest.raises(SystemExit, match="2"):
         cli.main(["--list", "--terminal", "   "])
+
+
+def test_version_flag(capsys) -> None:
+    from topgrade_update import __version__
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main(["--version"])
+
+    assert exc.value.code == 0
+    assert __version__ in capsys.readouterr().out
+
+
+def test_tray_config_error_sends_notification(monkeypatch, capsys) -> None:
+    def boom() -> Config:
+        raise ValueError("bad toml")
+
+    sent: list[str] = []
+    monkeypatch.setattr(cli, "setup_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(cli, "load_config", boom)
+    monkeypatch.setattr(cli, "send_message", lambda summary, body, **_kw: sent.append(body))
+
+    assert cli.main(["--tray"]) == 2
+    assert "bad toml" in sent[0]
+    assert "bad toml" in capsys.readouterr().err
+
+    sent.clear()
+    assert cli.main(["--check"]) == 2
+    assert sent == []
