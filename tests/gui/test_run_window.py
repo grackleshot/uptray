@@ -244,14 +244,22 @@ def test_run_window_remembers_geometry_and_body_split(qapp, tmp_path) -> None:  
         )
 
     first = make()
+    first.resize(1100, 760)  # well above the 840x560 minimum
     first.show()
-    first.resize(840, 590)
-    first._body.setSizes([300, 650])
-    first.close()
+    qapp.processEvents()
+    first._body.setSizes([300, 500])
+    qapp.processEvents()
+    saved = first._body.sizes()[0]
+    saved_size = (first.width(), first.height())  # what the (small) screen allowed
+    first.shutdown()
+
+    # Compare laid-out windows: an unshown splitter's sizes depend on font metrics.
     second = make()
-    assert (second.width(), second.height()) == (840, 590)
-    assert abs(second._body.sizes()[0] - first._body.sizes()[0]) < 10
-    second.close()
+    second.show()
+    qapp.processEvents()
+    assert (second.width(), second.height()) == saved_size
+    assert abs(second._body.sizes()[0] - saved) < 10
+    second.shutdown()
 
 
 def test_failed_run_shows_topgrade_reason(qapp, qtbot, tmp_path) -> None:  # noqa: ANN001

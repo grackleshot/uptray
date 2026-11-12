@@ -162,10 +162,10 @@ def test_updates_dialog_run_only_passes_topgrade_step(qapp, source, step) -> Non
 
 def test_updates_dialog_size_is_remembered(qapp) -> None:  # noqa: ANN001
     first, _ = _only_dialog("pacman")
-    first.resize(777, 555)
+    first.resize(1000, 700)  # well above the minimum, so nothing clamps it
     first.done(0)
     second, _ = _only_dialog("pacman")
-    assert (second.width(), second.height()) == (777, 555)
+    assert (second.width(), second.height()) == (1000, 700)
 
 
 def test_updates_dialog_ctrl_f_focuses_filter(qapp) -> None:  # noqa: ANN001
