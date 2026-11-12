@@ -89,7 +89,7 @@ step "Installing the app menu entry and icon"
 src="$(mktemp -d)"
 trap 'rm -rf "$src"' EXIT
 git clone --quiet --depth 1 "https://github.com/$REPO.git" "$src"
-bash "$src/scripts/install-desktop-integration.sh"
+UPTRAY_INSTALLER=1 bash "$src/scripts/install-desktop-integration.sh"
 
 if ((AUTOSTART)); then
     step "Starting the tray applet at login"

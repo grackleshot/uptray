@@ -57,4 +57,5 @@ if [[ "$INSTALL_TIMER" -eq 1 ]]; then
     fi
 fi
 
-echo "Done. Run 'uptray --tray --enable' to enable autostart."
+# install.sh enables autostart itself right after, so the hint would only confuse.
+[[ -n "${UPTRAY_INSTALLER:-}" ]] || echo "Done. Run 'uptray --tray --enable' to enable autostart."
