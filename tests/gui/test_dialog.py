@@ -12,8 +12,10 @@ from topgrade_update.core.models import CheckResult, Update
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtGui import QKeySequence, QShortcut  # noqa: E402
 from PySide6.QtWidgets import QTreeWidget  # noqa: E402
 
+from topgrade_update.core.topgrade_config import ONLY_STEP_FOR_SOURCE  # noqa: E402
 from topgrade_update.gui.dialog import (  # noqa: E402
     HistoryDialog,
     MaintenanceDialog,
@@ -139,3 +141,40 @@ def test_history_dialog_has_runs_tab_with_clean_text(qapp, tmp_path) -> None:  #
     assert runs._list.count() == 1
     assert "Summary" in runs._text.toPlainText()
     assert "\x1b" not in runs._text.toPlainText()
+
+
+def _only_dialog(source: str) -> tuple[UpdatesDialog, list[list[str]]]:
+    dialog = UpdatesDialog([CheckResult(source=source, updates=[Update("p", "1", "2", source)])])
+    calls: list[list[str]] = []
+    dialog.set_on_run_only(calls.append)
+    return dialog, calls
+
+
+@pytest.mark.parametrize(
+    ("source", "step"), [("pacman", "system"), ("aur", "system"), ("flatpak", "flatpak")]
+)
+def test_updates_dialog_run_only_passes_topgrade_step(qapp, source, step) -> None:  # noqa: ANN001
+    dialog, calls = _only_dialog(source)
+    assert ONLY_STEP_FOR_SOURCE[source] == step
+    dialog._run_only(step)
+    assert calls == [["--only", step]]
+
+
+def test_updates_dialog_size_is_remembered(qapp) -> None:  # noqa: ANN001
+    first, _ = _only_dialog("pacman")
+    first.resize(777, 555)
+    first.done(0)
+    second, _ = _only_dialog("pacman")
+    assert (second.width(), second.height()) == (777, 555)
+
+
+def test_updates_dialog_ctrl_f_focuses_filter(qapp) -> None:  # noqa: ANN001
+    dialog, _ = _only_dialog("pacman")
+    dialog.show()
+    dialog._tree.setFocus()
+    shortcut = dialog.findChild(QShortcut)
+    assert shortcut is not None
+    assert shortcut.key() == QKeySequence(QKeySequence.StandardKey.Find)
+    shortcut.activated.emit()
+    assert dialog.focusWidget() is dialog._filter
+    dialog.close()

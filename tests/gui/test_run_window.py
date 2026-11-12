@@ -233,3 +233,22 @@ def test_askpass_is_announced_in_prompt_bar(
     assert seen == {"text": "Password required for “System update”", "bar": True, "yes": False}
     assert window._prompt_bar.isHidden()
     window.shutdown()
+
+
+def test_run_window_remembers_geometry_and_body_split(qapp, tmp_path) -> None:  # noqa: ANN001
+    def make() -> RunWindow:
+        return RunWindow(
+            Config(run_mode="simple"),
+            command=_fake_command(tmp_path),
+            runs_dir=tmp_path / "runs",
+        )
+
+    first = make()
+    first.show()
+    first.resize(840, 590)
+    first._body.setSizes([300, 650])
+    first.close()
+    second = make()
+    assert (second.width(), second.height()) == (840, 590)
+    assert abs(second._body.sizes()[0] - first._body.sizes()[0]) < 10
+    second.close()

@@ -447,6 +447,8 @@ def test_show_updates_opens_dialog_on_errors(
 
         def set_on_preview(self, _cb: object) -> None: ...
 
+        def set_on_run_only(self, _cb: object) -> None: ...
+
         def exec(self) -> int:
             return 0
 

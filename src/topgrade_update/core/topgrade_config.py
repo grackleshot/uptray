@@ -18,6 +18,15 @@ TOPGRADE_STEP_MAP: dict[str, set[str]] = {
     "firmware": {"firmware"},
 }
 
+# topgrade `--only` step per checker source (not the inverse of the map above:
+# topgrade 17.16 rejects names like "pacman"/"aur"; both live under "system").
+ONLY_STEP_FOR_SOURCE: dict[str, str] = {
+    "pacman": "system",
+    "aur": "system",
+    "flatpak": "flatpak",
+    "firmware": "firmware",
+}
+
 # Checkers that mirror a topgrade step and therefore follow misc.only.
 _STEP_BACKED_CHECKERS = {"pacman", "aur", "flatpak", "firmware"}
 

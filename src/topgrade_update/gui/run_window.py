@@ -54,7 +54,14 @@ from topgrade_update.gui.icons import (
     spinner_pixmaps,
     status_pixmap,
 )
-from topgrade_update.gui.style import apply_theme, colors, set_danger, set_primary
+from topgrade_update.gui.style import (
+    apply_theme,
+    colors,
+    restore_window_state,
+    save_window_state,
+    set_danger,
+    set_primary,
+)
 from topgrade_update.gui.terminal_widget import TerminalWidget, webengine_available
 
 if TYPE_CHECKING:
@@ -217,7 +224,7 @@ class RunWindow(QMainWindow):
         layout.addWidget(self._progress)
 
         # --- Body: step checklist + Simple/Verbose stack -----------------
-        body = QSplitter(Qt.Orientation.Horizontal)
+        self._body = body = QSplitter(Qt.Orientation.Horizontal)
         self._step_list = QListWidget()
         self._step_list.setMinimumWidth(230)
         self._step_list.setIconSize(QSize(18, 18))
@@ -390,6 +397,7 @@ class RunWindow(QMainWindow):
         self._splitter.setCollapsible(1, True)
         self._splitter.setSizes([1000, 0])
         layout.addWidget(self._splitter, 1)
+        restore_window_state(self, "run_window", self._body)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -745,10 +753,13 @@ class RunWindow(QMainWindow):
 
     def _toggle_diagnose(self) -> None:
         if self._diagnose.isVisible():
+            save_window_state(None, "run_window/diagnose", self._splitter)
             self._diagnose.hide()
             self._splitter.setSizes([1000, 0])
             return
         self._diagnose.show()
+        if restore_window_state(None, "run_window/diagnose", self._splitter):
+            return
         total = max(1, sum(self._splitter.sizes()) or self._splitter.height())
         self._splitter.setSizes([int(total * 0.62), int(total * 0.38)])
 
@@ -850,7 +861,11 @@ class RunWindow(QMainWindow):
             return
         super().keyPressEvent(event)
 
+    def _save_layout(self) -> None:
+        save_window_state(self, "run_window", self._body)
+
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        self._save_layout()
         if self.is_active and not self._quitting:
             # Closing must never kill an upgrade mid-transaction: keep it running.
             event.ignore()

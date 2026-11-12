@@ -689,6 +689,7 @@ class Tray(QSystemTrayIcon):
         dlg = UpdatesDialog(self._results)
         dlg.set_on_run(self._run_topgrade)
         dlg.set_on_preview(self._preview_topgrade)
+        dlg.set_on_run_only(self._run_topgrade)
         dlg.exec()
 
     def _show_history(self) -> None:

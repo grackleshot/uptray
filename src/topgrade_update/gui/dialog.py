@@ -4,8 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import QSize, Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase, QTextCursor
+from PySide6.QtCore import QPoint, QSize, Qt, QUrl
+from PySide6.QtGui import (
+    QColor,
+    QDesktopServices,
+    QFontDatabase,
+    QKeySequence,
+    QShortcut,
+    QTextCursor,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -16,6 +23,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QPushButton,
     QTabWidget,
     QTextEdit,
@@ -27,9 +35,16 @@ from PySide6.QtWidgets import (
 
 from topgrade_update.core.links import upstream_url
 from topgrade_update.core.run_history import RunSummary, list_runs
+from topgrade_update.core.topgrade_config import ONLY_STEP_FOR_SOURCE
 from topgrade_update.core.topgrade_session import default_runs_dir, strip_ansi
 from topgrade_update.gui.icons import ICON_MD, ICON_SM, status_pixmap
-from topgrade_update.gui.style import apply_theme, colors, set_primary
+from topgrade_update.gui.style import (
+    apply_theme,
+    colors,
+    restore_window_state,
+    save_window_state,
+    set_primary,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -129,6 +144,8 @@ class UpdatesDialog(QDialog):
         self._source_of_item: dict[QTreeWidgetItem, str] = {}
         self._on_run: Callable[[], None] | None = None
         self._on_preview: Callable[[], None] | None = None
+        self._on_run_only: Callable[[list[str]], None] | None = None
+        self._source_of_header: dict[QTreeWidgetItem, str] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 12)
@@ -149,10 +166,13 @@ class UpdatesDialog(QDialog):
             )
 
         self._filter = QLineEdit()
-        self._filter.setPlaceholderText("Filter packages…")
+        self._filter.setPlaceholderText("Filter packages… (Ctrl+F)")
         self._filter.setClearButtonEnabled(True)
         self._filter.textChanged.connect(self._apply_filter)
         layout.addWidget(self._filter)
+        QShortcut(QKeySequence(QKeySequence.StandardKey.Find), self).activated.connect(
+            self._focus_filter
+        )
 
         self._tree = QTreeWidget()
         self._tree.setColumnCount(3)
@@ -162,6 +182,8 @@ class UpdatesDialog(QDialog):
         self._tree.setUniformRowHeights(True)
         self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
         self._tree.setToolTip("Double-click a package to open its project page.")
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._source_menu)
         layout.addWidget(self._tree, 1)
 
         for result in self._results:
@@ -170,6 +192,7 @@ class UpdatesDialog(QDialog):
                     self._tree, [f"{result.source} ({len(result.updates)})"]
                 )
                 source_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                self._source_of_header[source_item] = result.source
                 font = source_item.font(0)
                 font.setBold(True)
                 source_item.setFont(0, font)
@@ -224,6 +247,11 @@ class UpdatesDialog(QDialog):
         btn_row.addWidget(btn_upgrade)
         btn_row.addWidget(btn_close)
         layout.addLayout(btn_row)
+        restore_window_state(self, "updates_dialog")
+
+    def done(self, result: int) -> None:
+        save_window_state(self, "updates_dialog")
+        super().done(result)
 
     def set_on_run(self, callback: Callable[[], None]) -> None:
         """Set the callback for the Update Now button."""
@@ -232,6 +260,34 @@ class UpdatesDialog(QDialog):
     def set_on_preview(self, callback: Callable[[], None]) -> None:
         """Set the callback for the Preview (Dry Run) button."""
         self._on_preview = callback
+
+    def set_on_run_only(self, callback: Callable[[list[str]], None]) -> None:
+        """Set the callback for "Update only this source" (receives topgrade args)."""
+        self._on_run_only = callback
+
+    def _focus_filter(self) -> None:
+        self._filter.setFocus()
+        self._filter.selectAll()
+
+    def _source_menu(self, pos: QPoint) -> None:
+        item = self._tree.itemAt(pos)
+        source = self._source_of_header.get(item) if item is not None else None
+        step = ONLY_STEP_FOR_SOURCE.get(source or "")
+        if step is None or self._on_run_only is None:
+            return
+        menu = QMenu(self)
+        # pacman and AUR share topgrade's "system" step, so say so in the label.
+        label = "Update only system packages (pacman + AUR)" if step == "system" else (
+            "Update only this source"
+        )
+        action = menu.addAction(label)
+        action.triggered.connect(lambda: self._run_only(step))
+        menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _run_only(self, step: str) -> None:
+        if self._on_run_only:
+            self._on_run_only(["--only", step])
+        self.close()
 
     def _apply_filter(self, text: str) -> None:
         """Show only packages whose name matches the filter text."""

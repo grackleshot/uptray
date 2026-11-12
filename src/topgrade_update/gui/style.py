@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+from PySide6.QtCore import QSettings
 from PySide6.QtGui import QColor, QPalette
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication, QSplitter, QWidget
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -372,3 +373,25 @@ def tag_card(frame: QWidget) -> None:
 def text_color(name: str, app: QApplication | None = None) -> QColor:
     """Return a QColor for a named theme token."""
     return QColor(colors(app)[name])
+
+
+def save_window_state(widget: QWidget | None, key: str, *splitters: QSplitter) -> None:
+    """Remember a window's geometry and its splitters' sizes under ``key``."""
+    settings = QSettings("topgrade-update", "topgrade-update")
+    if widget is not None:
+        settings.setValue(f"{key}/geometry", widget.saveGeometry())
+    for i, splitter in enumerate(splitters):
+        settings.setValue(f"{key}/splitter{i}", splitter.saveState())
+
+
+def restore_window_state(widget: QWidget | None, key: str, *splitters: QSplitter) -> bool:
+    """Restore what :func:`save_window_state` stored; True if everything was found."""
+    settings = QSettings("topgrade-update", "topgrade-update")
+    ok = True
+    if widget is not None:
+        geometry = settings.value(f"{key}/geometry")
+        ok = geometry is not None and widget.restoreGeometry(geometry)
+    for i, splitter in enumerate(splitters):
+        state = settings.value(f"{key}/splitter{i}")
+        ok = (state is not None and splitter.restoreState(state)) and ok
+    return ok
