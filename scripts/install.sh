@@ -1,14 +1,19 @@
 #!/usr/bin/env bash
 # Install (or reinstall) topgrade-update on an Arch-based PC such as CachyOS,
-# straight from the private GitHub repo. Safe to re-run.
-#
-# Usage: bash install.sh [--no-autostart]
-#   --no-autostart  Don't start the tray applet at login.
-#
-# Needs a one-time `gh auth login` (the script offers it) because the repo is
-# private. Update later with: uv tool upgrade topgrade-update
+# straight from GitHub. Safe to re-run. Update later with:
+#   uv tool upgrade topgrade-update
 
 set -euo pipefail
+
+usage() {
+    cat <<'USAGE'
+Usage: install.sh [--no-autostart]
+  --no-autostart  Don't start the tray applet at login.
+
+If the GitHub repo can't be read anonymously (a private copy), the script
+signs in with the GitHub CLI (gh) so git and uv can fetch it.
+USAGE
+}
 
 REPO="grackleshot/topgrade-update"
 # shortcut: PySide6 6.11 requires Python < 3.15; bump once PySide6 supports newer.
@@ -18,7 +23,7 @@ AUTOSTART=1
 for arg in "$@"; do
     case "$arg" in
         --no-autostart) AUTOSTART=0 ;;
-        -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
+        -h|--help) usage; exit 0 ;;
         *) echo "Unknown option: $arg" >&2; exit 1 ;;
     esac
 done
@@ -31,7 +36,7 @@ command -v pacman >/dev/null || die "this installer is for Arch-based systems (p
 
 step "Checking system packages"
 declare -A PACKAGE_FOR=(
-    [git]=git [gh]=github-cli [uv]=uv [checkupdates]=pacman-contrib
+    [git]=git [uv]=uv [checkupdates]=pacman-contrib
 )
 missing=()
 for cmd in "${!PACKAGE_FOR[@]}"; do
@@ -46,16 +51,20 @@ if ! command -v topgrade >/dev/null; then
     if pacman -Si topgrade >/dev/null 2>&1; then
         sudo pacman -S --needed topgrade
     elif helper="$(command -v paru || command -v yay)"; then
-        "$helper" -S --needed topgrade
+        "$helper" -S --needed topgrade-bin  # prebuilt; "topgrade" compiles for minutes
     else
         echo "topgrade isn't installed and no AUR helper was found." >&2
         echo "Update checks will work; install topgrade from the AUR to apply updates." >&2
     fi
 fi
 
-step "Signing in to GitHub"
-gh auth status >/dev/null 2>&1 || gh auth login
-gh auth setup-git  # lets git (and uv) fetch the private repo over HTTPS
+step "Checking access to github.com/$REPO"
+if ! GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true git ls-remote "https://github.com/$REPO.git" HEAD >/dev/null 2>&1; then
+    # Private repo: sign in with the GitHub CLI so git (and uv) can fetch it.
+    command -v gh >/dev/null || sudo pacman -S --needed github-cli
+    gh auth status >/dev/null 2>&1 || gh auth login
+    gh auth setup-git
+fi
 
 step "Installing topgrade-update from github.com/$REPO (main)"
 uv tool install --force --python "$PYTHON" "topgrade-update[gui] @ git+https://github.com/$REPO.git"

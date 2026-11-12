@@ -7,6 +7,11 @@
 [![mypy](https://img.shields.io/badge/mypy-checked-blue.svg)](https://mypy.readthedocs.io/)
 [![ruff](https://img.shields.io/badge/lint-ruff-orange.svg)](https://docs.astral.sh/ruff/)
 
+> **Status: beta.** Developed and tested on CachyOS with KDE Plasma (Wayland).
+> Other Arch-based distros should work; GNOME needs the AppIndicator extension
+> for the tray icon. Bug reports are welcome; see [SECURITY.md](SECURITY.md) for
+> security issues.
+
 ## Features
 
 - **System tray applet** with periodic update checking and a badge counter
@@ -44,24 +49,26 @@ sudo pacman -S pacman-contrib
 
 ### On a CachyOS / Arch PC (recommended)
 
-The repo is private, so each PC signs in to GitHub once with the GitHub CLI.
-These commands work in fish and bash:
+One command (works in fish and bash):
 
 ```bash
-sudo pacman -S --needed github-cli
-gh auth login
-gh api -H "Accept: application/vnd.github.raw" repos/grackleshot/topgrade-update/contents/scripts/install.sh > /tmp/topgrade-update-install.sh
-bash /tmp/topgrade-update-install.sh
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/grackleshot/topgrade-update/main/scripts/install.sh)"
 ```
 
 The installer:
 
-- installs whatever is missing of `git`, `github-cli`, `uv` and `pacman-contrib`
-  (asks for your sudo password only if something is missing)
-- installs `topgrade` from the repos or, failing that, the AUR via `paru`/`yay`
-- runs `gh auth setup-git` so git can fetch this private repo
+- installs whatever is missing of `git`, `uv` and `pacman-contrib` (asks for
+  your sudo password only if something is missing)
+- installs `topgrade` from the repos or, failing that, `topgrade-bin` from the
+  AUR via `paru`/`yay`
 - installs the app with `uv tool install` from `main` (Python 3.14, PySide6)
 - adds the app-menu entry and icon, turns on autostart, and starts the tray
+
+If the repo isn't readable anonymously (a private copy), the installer signs in
+with the GitHub CLI and runs `gh auth setup-git` so git can fetch it; in that
+case download the script with
+`gh api -H "Accept: application/vnd.github.raw" repos/grackleshot/topgrade-update/contents/scripts/install.sh > /tmp/topgrade-update-install.sh`
+and run `bash /tmp/topgrade-update-install.sh`.
 
 Pass `--no-autostart` to skip autostart. Re-running the script is safe. If your
 shell can't find `topgrade-update` afterwards, run `uv tool update-shell` once.
@@ -308,6 +315,18 @@ pytest tests/
 # All checks
 ruff check src/ tests/ && mypy src/ && pytest tests/
 ```
+
+## Privacy
+
+- No telemetry. Network traffic comes from the update tools themselves
+  (`checkupdates`, your AUR helper, `flatpak`, `fwupdmgr`, `topgrade`) plus the
+  Arch news feed (`https://archlinux.org/feeds/news/`).
+- Run transcripts are kept in `~/.local/share/topgrade-update/runs/`. They can
+  contain package names and your hostname; sudo passwords are never written.
+- **Diagnose** (offered after a failed run) starts an AI coding agent you have
+  installed (`claude`, `codex` or `pi`) and points it at the failed run's
+  transcript. That agent sends what it reads to its provider. Nothing is sent
+  unless you open Diagnose and start an agent.
 
 ## Contributing
 
