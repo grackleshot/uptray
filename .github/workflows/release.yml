@@ -1,0 +1,101 @@
+name: Release
+
+# Push a tag like v0.9.0 (matching src/uptray/__init__.py) to publish a release.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Check the tag matches the app version
+        run: |
+          version="$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' src/uptray/__init__.py)"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match __version__ = $version"
+            exit 1
+          fi
+
+      - name: Build the wheel and source archive
+        run: pipx run build
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create "$GITHUB_REF_NAME" dist/*
+          --title "Uptray $GITHUB_REF_NAME" --generate-notes --verify-tag
+
+  aur:
+    needs: github-release
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    env:
+      AUR_SSH_PRIVATE_KEY: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+      # Published at https://aur.archlinux.org (Ed25519 host key).
+      AUR_HOST_FINGERPRINT: SHA256:RFzBCUItH9LZS0cKB5UE6ceAYhBD5C8GeOBip8Z11+4
+    steps:
+      - name: Install build tools
+        run: >
+          pacman -Syu --noconfirm --needed git openssh namcap pacman-contrib
+          python-build python-hatchling python-installer python-wheel
+          pyside6 python-jeepney qt6-webengine
+
+      - uses: actions/checkout@v4
+
+      - name: Build and test the package from the release tarball
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          useradd -m builder
+          install -d -o builder /home/builder/pkg
+          sed -e "s/^pkgver=.*/pkgver=$version/" -e "s/^pkgrel=.*/pkgrel=1/" \
+            packaging/aur/PKGBUILD > /home/builder/pkg/PKGBUILD
+          chown builder /home/builder/pkg/PKGBUILD
+          cd /home/builder/pkg
+          # -d: topgrade is only on the AUR; it is assumed installed for the test.
+          su builder -c "updpkgsums && makepkg -d --noconfirm"
+          pacman -U --noconfirm --assume-installed topgrade ./uptray-*.pkg.tar.zst
+          uptray --version
+          QT_QPA_PLATFORM=offscreen python -c "import uptray.gui.tray, PySide6.QtWebEngineWidgets"
+          namcap PKGBUILD
+          su builder -c "makepkg --printsrcinfo" > .SRCINFO
+
+      - name: Publish to the AUR
+        if: env.AUR_SSH_PRIVATE_KEY != ''
+        run: |
+          keys="$(mktemp -d)"
+          printf '%s\n' "$AUR_SSH_PRIVATE_KEY" > "$keys/aur"
+          chmod 600 "$keys/aur"
+          # Trust the AUR only if its host key matches the published fingerprint.
+          ssh-keyscan -t ed25519 aur.archlinux.org > "$keys/known_hosts" 2>/dev/null
+          if ! ssh-keygen -lf "$keys/known_hosts" | grep -qF "$AUR_HOST_FINGERPRINT"; then
+            echo "::error::aur.archlinux.org host key does not match the published fingerprint"
+            exit 1
+          fi
+          export GIT_SSH_COMMAND="ssh -i $keys/aur -o IdentitiesOnly=yes -o UserKnownHostsFile=$keys/known_hosts -o StrictHostKeyChecking=yes"
+          git clone ssh://aur@aur.archlinux.org/uptray.git /tmp/aur
+          cp /home/builder/pkg/PKGBUILD /home/builder/pkg/.SRCINFO /tmp/aur/
+          cd /tmp/aur
+          git config user.name "grackleshot"
+          git config user.email "8877226+grackleshot@users.noreply.github.com"
+          git add PKGBUILD .SRCINFO
+          if git diff --cached --quiet; then
+            echo "The AUR package is already up to date."
+            exit 0
+          fi
+          git commit -m "Update to ${GITHUB_REF_NAME#v}"
+          git push origin HEAD:master
+
+      - name: Skip AUR publishing
+        if: env.AUR_SSH_PRIVATE_KEY == ''
+        run: echo "::notice::AUR_SSH_PRIVATE_KEY is not set, so the package was built and tested but not published."

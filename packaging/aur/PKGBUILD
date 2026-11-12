@@ -1,0 +1,48 @@
+# Maintainer: grackleshot <8877226+grackleshot@users.noreply.github.com>
+#
+# Source of truth for the AUR package "uptray". The release workflow
+# (.github/workflows/release.yml) sets pkgver from the git tag, fills in the
+# checksum of GitHub's tag tarball, test-builds it and pushes it to the AUR.
+
+pkgname=uptray
+pkgver=0.9.0
+pkgrel=1
+pkgdesc="System tray update notifier for Arch-based Linux, powered by topgrade"
+arch=('any')
+url="https://github.com/grackleshot/uptray"
+license=('MIT')
+depends=(
+  'hicolor-icon-theme'
+  'pacman-contrib'
+  'pyside6'
+  'python'
+  'python-jeepney'
+  'qt6-webengine'
+  'topgrade'
+)
+optdepends=(
+  'flatpak: Flatpak update checks'
+  'fwupd: firmware update checks'
+  'paru: AUR update checks'
+  'yay: AUR update checks'
+)
+makedepends=(
+  'python-build'
+  'python-hatchling'
+  'python-installer'
+  'python-wheel'
+)
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+build() {
+  cd "$pkgname-$pkgver"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "$pkgname-$pkgver"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 systemd/uptray.service systemd/uptray.timer -t "$pkgdir/usr/lib/systemd/user/"
+}

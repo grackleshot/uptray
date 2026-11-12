@@ -457,7 +457,6 @@ wheels = [
 
 [[package]]
 name = "uptray"
-version = "1.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "tomli", marker = "python_full_version < '3.11'" },
@@ -485,4 +484,4 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2" },
 ]
-provides-extras = ["gui", "dev"]
+provides-extras = ["dev", "gui"]

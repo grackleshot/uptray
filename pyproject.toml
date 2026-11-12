@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "uptray"
-version = "1.0.0"
+dynamic = ["version"]  # from src/uptray/__init__.py
 description = "A system tray update notifier for Arch-based Linux, powered by topgrade"
 readme = "README.md"
 license = { text = "MIT" }
@@ -24,6 +24,9 @@ uptray = "uptray.cli.main:main"
 
 [project.urls]
 Homepage = "https://github.com/grackleshot/uptray"
+
+[tool.hatch.version]
+path = "src/uptray/__init__.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/uptray"]

@@ -56,9 +56,20 @@ sudo pacman -S pacman-contrib
 > installer removes the old install, and on first launch Uptray moves your
 > settings, run history and autostart entry over to its new folders.
 
-### On a CachyOS / Arch PC (recommended)
+### From the AUR (recommended)
 
-One command (works in fish and bash):
+```bash
+paru -S uptray
+```
+
+(or `yay -S uptray`). Then open **Uptray** from your app menu and tick
+**Start the tray applet at login** in its Settings. Updates arrive with your
+normal system updates.
+
+### One-line installer (any Arch-based PC)
+
+Installs from `main` with uv instead of as a system package. Works in fish and
+bash:
 
 ```bash
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/grackleshot/uptray/main/scripts/install.sh)"
@@ -368,6 +379,24 @@ ruff check src/ tests/ && mypy src/ && pytest tests/
   installed (`claude`, `codex` or `pi`) and points it at the failed run's
   transcript. That agent sends what it reads to its provider. Nothing is sent
   unless you open Diagnose and start an agent.
+
+## Releasing
+
+1. Bump `__version__` in `src/uptray/__init__.py` and commit.
+2. Tag and push: `git tag v0.9.1 && git push origin v0.9.1`.
+
+The release workflow then creates the GitHub release (wheel and source
+archive) and builds, tests and publishes the `uptray` AUR package from
+`packaging/aur/PKGBUILD`.
+
+One-time AUR setup for the maintainer: create an account on
+[aur.archlinux.org](https://aur.archlinux.org), make a key used only for this
+(`ssh-keygen -t ed25519 -f ~/.ssh/aur-uptray -C uptray-aur`), paste
+`~/.ssh/aur-uptray.pub` into **My Account → SSH Public Key**, and store the
+private key as a repository secret:
+`gh secret set AUR_SSH_PRIVATE_KEY -R grackleshot/uptray < ~/.ssh/aur-uptray`.
+Without the secret the workflow still builds and tests the package but skips
+publishing.
 
 ## Contributing
 
