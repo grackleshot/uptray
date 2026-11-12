@@ -46,6 +46,7 @@ from topgrade_update.core.topgrade_session import (
     available_agents,
     build_agent_command,
     build_diagnose_prompt,
+    default_runs_dir,
     list_run_logs,
 )
 from topgrade_update.gui.icons import (
@@ -99,11 +100,13 @@ class RunWindow(QMainWindow):
         command: list[str] | None = None,
         title: str | None = None,
         on_finished: Callable[[int], None] | None = None,
+        runs_dir: Path | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         apply_theme(self)
         self._cfg = cfg
+        self._runs_dir = runs_dir if runs_dir is not None else default_runs_dir()
         self._extra_args = list(extra_args or [])
         self._command_override = command
         self._on_finished = on_finished
@@ -432,6 +435,7 @@ class RunWindow(QMainWindow):
 
         self._session = TopgradeSession(
             command,
+            runs_dir=self._runs_dir,
             on_event=self.session_event.emit,
         )
         self._log_path = self._session.log_path
@@ -699,7 +703,7 @@ class RunWindow(QMainWindow):
                     item.setIcon(status_pixmap("skipped", ICON_SM))
 
     def _review_log(self) -> None:
-        ReviewLogDialog(current=self._log_path, parent=self).exec()
+        ReviewLogDialog(current=self._log_path, runs_dir=self._runs_dir, parent=self).exec()
 
     def _toggle_diagnose(self) -> None:
         if self._diagnose.isVisible():
@@ -741,6 +745,8 @@ class RunWindow(QMainWindow):
         self._agent_session = TopgradeSession(
             command,
             cwd=Path.home(),
+            # Kept apart so diagnose transcripts never show up as update runs.
+            runs_dir=self._runs_dir / "agents",
             enable_askpass=False,
             on_event=self.agent_event.emit,
         )
@@ -807,7 +813,13 @@ class RunWindow(QMainWindow):
 class ReviewLogDialog(QDialog):
     """Browse the current run transcript and earlier saved runs."""
 
-    def __init__(self, current: Path | None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        current: Path | None,
+        *,
+        runs_dir: Path | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
         super().__init__(parent)
         apply_theme(self)
         self.setWindowTitle("Topgrade Update — Logs")
@@ -833,7 +845,7 @@ class ReviewLogDialog(QDialog):
         body.setSpacing(12)
 
         self._list = QListWidget()
-        logs = list_run_logs()
+        logs = list_run_logs(runs_dir)
         if current is not None and current not in logs and current.is_file():
             logs.insert(0, current)
         self._paths = logs

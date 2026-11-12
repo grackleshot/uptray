@@ -55,10 +55,11 @@ RETRY_PROMPT = "Retry? (y)es/(N)o/(s)hell/(q)uit"
 _ANSI_RE = re.compile(
     r"\x1b(?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[()][0-9A-Za-z])"
 )
-_SEPARATOR_BOX_RE = re.compile(
-    r"──\s+(?:(\d{2}:\d{2}:\d{2})\s+-\s+)?(.+?)\s+─{2,}\s*$"
-)
-_SEPARATOR_PLAIN_RE = re.compile(r"――\s+(.+?)\s+――\s*$")
+# Step headers: "── 22:52:35 - Sudo ──────" (box) or "―― 22:52:35 - Sudo ――" (plain).
+# The timestamp is optional and never part of the step's identity.
+_STEP_NAME = r"(?:(?P<time>\d{2}:\d{2}:\d{2})\s+-\s+)?(?P<name>.+?)"
+_SEPARATOR_BOX_RE = re.compile(rf"──\s+{_STEP_NAME}\s+─{{2,}}\s*$")
+_SEPARATOR_PLAIN_RE = re.compile(rf"――\s+{_STEP_NAME}\s+――\s*$")
 _RESULT_RE = re.compile(
     r"^(?P<name>.+?):\s+(?P<status>OK|FAILED|IGNORED|SKIPPED)(?::\s*(?P<reason>.*))?$"
 )
@@ -280,19 +281,11 @@ def _parse_line(state: _ParserState, raw_line: str) -> list[SessionEvent]:
         state.last_prompt = None
         events.append(PromptCleared())
 
-    prompt_match = _PROMPT_RE.search(line)
-    if prompt_match is not None:
-        if _prompt_answer_tail(line, prompt_match):
-            # Answer echoed on the prompt line: consumed, not a new question.
-            return events
-        if line != state.last_prompt:
-            state.last_prompt = line
-            events.append(PromptRequest(question=line))
-        return events
-
+    # Separators win over prompts: a prompt that was never answered can share
+    # a line with the next step's header ("...[Y/n]: ―― 23:08:07 - pacdiff ――").
     separator = _SEPARATOR_BOX_RE.search(line) or _SEPARATOR_PLAIN_RE.search(line)
     if separator is not None:
-        name = separator.group(separator.lastindex or 1).strip()
+        name = separator.group("name").strip()
         if state.current_step and state.steps.get(state.current_step) == "running":
             events.append(
                 StepEvent(name=state.current_step, status="succeeded", latest_line=line)
@@ -301,6 +294,16 @@ def _parse_line(state: _ParserState, raw_line: str) -> list[SessionEvent]:
         state.current_step = name
         state.steps[name] = "running"
         events.append(StepEvent(name=name, status="running", latest_line=line))
+        return events
+
+    prompt_match = _PROMPT_RE.search(line)
+    if prompt_match is not None:
+        if _prompt_answer_tail(line, prompt_match):
+            # Answer echoed on the prompt line: consumed, not a new question.
+            return events
+        if line != state.last_prompt:
+            state.last_prompt = line
+            events.append(PromptRequest(question=line))
         return events
 
     result = _RESULT_RE.match(line)

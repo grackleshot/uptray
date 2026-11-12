@@ -66,6 +66,32 @@ def test_parser_plain_separator_and_skip() -> None:
     assert any(isinstance(e, StepEvent) and e.status == "skipped" for e in events)
 
 
+@pytest.mark.parametrize(
+    "header",
+    [
+        "── 22:52:35 - Sudo ──────────────",
+        "── Sudo ──────────────",
+        "―― 22:52:35 - Sudo ――",
+        "―― Sudo ――",
+        "generic.rs:871―― 22:52:35 - Sudo ――",
+    ],
+)
+def test_parser_step_name_never_includes_timestamp(header: str) -> None:
+    events = parse_topgrade_chunk(_ParserState(), f"{header}\n")
+    names = [e.name for e in events if isinstance(e, StepEvent)]
+    assert names == ["Sudo"]
+
+
+def test_parser_separator_wins_over_unanswered_prompt_on_same_line() -> None:
+    state = _ParserState()
+    events = parse_topgrade_chunk(
+        state,
+        ":: Do you want to remove all saved diffs? [Y/n]: ―― 23:08:07 - pacdiff check ――\n",
+    )
+    assert not any(isinstance(e, PromptRequest) for e in events)
+    assert state.current_step == "pacdiff check"
+
+
 def test_session_writes_log_and_emits_finish(tmp_path: Path) -> None:
     events: list[object] = []
     script = tmp_path / "fake_topgrade.sh"

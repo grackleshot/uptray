@@ -67,17 +67,19 @@ def test_run_window_failed_run_enables_diagnose_default(
 def test_review_log_lists_current_transcript(
     qapp, qtbot, tmp_path, monkeypatch  # noqa: ANN001
 ) -> None:
-    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    runs = tmp_path / "runs"
     window = RunWindow(
         Config(run_mode="simple"),
         command=_fake_command(tmp_path),
+        runs_dir=runs,
     )
     qtbot.waitUntil(lambda: window._returncode is not None, timeout=5000)
     assert window._log_path is not None
     assert window._log_path.is_file()
+    assert window._log_path.parent == runs
     from topgrade_update.gui.run_window import ReviewLogDialog
 
-    dialog = ReviewLogDialog(current=window._log_path)
+    dialog = ReviewLogDialog(current=window._log_path, runs_dir=runs)
     assert dialog._list.count() >= 1
     dialog.close()
     window.close()
