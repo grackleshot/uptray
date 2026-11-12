@@ -73,7 +73,9 @@ if uv tool list 2>/dev/null | grep -q '^topgrade-update '; then
     rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/topgrade-update-tray.desktop" \
         "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps/topgrade-update.svg"
 fi
-if pgrep -f "topgrade-update --tray" >/dev/null; then
+# "[t]"/"[u]": run as bash -c "$(curl ...)", this script's own text is a process
+# command line, and a plain pattern would match the installer itself.
+if pgrep -f "[t]opgrade-update --tray" >/dev/null; then
     echo "An old topgrade-update tray is still running: quit it from its tray menu." >&2
 fi
 
@@ -94,7 +96,7 @@ if ((AUTOSTART)); then
     "$BIN" --tray --enable
 fi
 
-if [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] && ! pgrep -f "uptray --tray" >/dev/null; then
+if [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] && ! pgrep -f "[u]ptray --tray" >/dev/null; then
     step "Starting the tray applet now"
     setsid -f "$BIN" --tray >/dev/null 2>&1 < /dev/null
 fi
