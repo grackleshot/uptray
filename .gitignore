@@ -23,3 +23,10 @@ Thumbs.db
 
 # Logs
 .local/share/topgrade-update/log
+
+# Personal dev tooling and notes (kept locally, not published)
+.pi/
+.planning/
+.claude/
+CLAUDE.md
+progress.md
