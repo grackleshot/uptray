@@ -137,3 +137,32 @@ do"); the aur checker was right. 172 tests pass; ruff + mypy strict clean.
   askpass unification, prompt-bar v2, dry-run handoff, run history, persisted
   geometry, keyboard pass, per-source updates, i18n last, tray detail,
   liveness hint, housekeeping). Suggested order inside the file.
+
+## Session 2026-11-12: polish & QoL round
+
+Worked through .planning/IMPROVEMENTS-2026-11.md (status table there). Shipped:
+step-name cleanup, injectable runs dir, failure reasons, typed prompt answers,
+dry run -> "Run for real", silence hint, Runs tab in History, persisted
+geometry, "Update only this source", keyboard shortcuts (Esc / Ctrl+1 / Ctrl+2 /
+Ctrl+F), closing the run window keeps the update running, honest counts
+(reboot is not an update), re-check during snooze, missing pacman-contrib
+surfaced, safe left-click, error icon/dialog, replacing notifications, and
+settings/CLI tidy (autostart toggle, minutes, Restore Defaults, --version,
+exit-code epilog). Deliberately left for later: #3 terminal overlap
+investigation, #12 i18n; #15 housekeeping is partial. Large modules split
+(DiagnosePanel, run_simple_page, tray_logic helpers) to stay under 800 lines.
+
+Gotchas:
+- Qt 6 `QApplication.quit()` aborts when a window ignores its close event, so
+  Tray Quit shuts the run window down explicitly first (`RunWindow.shutdown`).
+- Offscreen windows are never active, so every finished run would send a real
+  notification; GUI tests patch `run_window.send_message` (and
+  `diagnose_panel.send_message`) via tests/gui/conftest.py.
+- QSettings path is isolated in tests/conftest.py (with XDG dirs).
+- The old run-mode toggle test overwrote the real ~/.config config.toml; the
+  isolation fix closes that.
+- An intermittent crash dump at pytest exit was seen once (not reproduced in 10
+  reruns).
+
+Tests: 226 passing; ruff and mypy clean.
+

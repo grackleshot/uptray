@@ -15,17 +15,30 @@
 - **Arch news**: reads the [archlinux.org news feed](https://archlinux.org/feeds/news/), flags items published since you last read the news, and opens them from the tray menu
 - **Event-driven checks**: re-checks shortly after the pacman database changes (someone ran an upgrade), after resume from suspend, and skips checks while offline
 - **Post-update maintenance reminders**: orphan packages, unmerged `.pacnew`/`.pacsave` files, oversized package cache — surfaced once per day after an update session ends
-- **Update history**: browsable list of recent upgrade sessions parsed from `/var/log/pacman.log`
-- **Dry-run preview**: launches `topgrade --dry-run` from the tray or dialog
+- **Update history**: the History window has a System log tab (recent upgrade sessions parsed from `/var/log/pacman.log`) and a Runs tab (past runs started from the app)
+- **Dry-run preview**: launches `topgrade --dry-run` from the tray or dialog; when the preview succeeds, a **Run for real** button starts the actual update
+- **In-app run window**: Simple and Verbose views, step checklist, and a prompt bar that surfaces questions from the running command, including answers you type (pacdiff menus, pacman "Enter a number")
+- **Keeps running when closed**: closing the run window mid-update hides it instead of stopping the update; choose Run Topgrade in the tray to bring it back, and Cancel asks before stopping
+- **Update only this source**: right-click a source in the Updates dialog to run topgrade for just that step
 - **Topgrade integration**: respects your `topgrade.toml` (including `misc.disable`, `misc.only`, and `topgrade.d/` drop-ins), launches in your preferred terminal
 - **Package navigation**: double-click a package in the dialog or click it in the tray menu to open its upstream page
-- **Settings dialog**: edit interval, sources, quiet hours, terminals, icons, and more without touching TOML
+- **Settings dialog**: edit interval (in minutes), sources including firmware and reboot, quiet hours, terminals, icons, and the autostart toggle without touching TOML; Restore Defaults resets the form
 - **Colorblind-safe icon palette** (`tray.icon_style = "colorblind"`) plus a dedicated reboot-required icon
 - **Single instance**: a second tray launch exits instead of duplicating notifications
 - **Plugin architecture**: add custom checkers via entry points
 - **Configurable**: TOML config at `~/.config/topgrade-update/config.toml`
-- **CLI**: `topgrade-update --check`, `--list`, `--tray`, `--verbose`, `--json`
+- **CLI**: `topgrade-update --check`, `--list`, `--tray`, `--verbose`, `--json`, `--version`
 - **systemd timer option**: run headless checks at boot and every 6 hours without the tray
+
+## Requirements
+
+The pacman checker uses `checkupdates`, which ships in the `pacman-contrib`
+package. Without it the pacman source reports an error ("install
+pacman-contrib") instead of silently showing zero updates.
+
+```bash
+sudo pacman -S pacman-contrib
+```
 
 ## Installation
 
@@ -80,7 +93,27 @@ topgrade-update --tray --disable
 
 # Verbose output
 topgrade-update --check --verbose
+
+# Print the version
+topgrade-update --version
 ```
+
+Exit codes:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | success / system is up to date |
+| 1 | updates are available (`--check`), or topgrade/tray/GUI is unavailable |
+| 2 | errors, or the check was incomplete |
+| 3 | the tray applet is already running |
+
+### Keyboard shortcuts
+
+| Key | Where | Action |
+| --- | --- | --- |
+| Esc | Run window | Close a finished run (never mid-run) |
+| Ctrl+1 / Ctrl+2 | Run window | Switch to Simple / Verbose view |
+| Ctrl+F | Updates dialog | Focus the package filter |
 
 ### Configuration
 

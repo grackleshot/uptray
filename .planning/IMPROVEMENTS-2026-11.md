@@ -119,3 +119,38 @@ subtitle — distinguishes slow-but-alive from hung without changing the design.
 4. `ruff`, `mypy --strict` (src), `pytest` green; no test writes outside tmp.
 
 **Suggested order:** 1 → 2 → 4 → 5 → 3 → 6 → 9 → 10 → 7 → 8 → 11 → 14 → 13 → 15 → 12.
+
+---
+
+## Status (2026-11-12)
+
+| # | Item | Status |
+|---|------|--------|
+| 1 | Strip timestamps from step names | done (df89086) |
+| 2 | Injectable runs directory | done (df89086) |
+| 3 | Terminal overlap artifact | not done (deliberately left for later) |
+| 4 | Failure detail beyond exit code | done (a7d6c84) |
+| 5 | Unify sudo/askpass UX with prompt bar | done (f56a5ef) |
+| 6 | Prompt bar v2: free-text answers | done (a7d6c84) |
+| 7 | Dry-run to real-run handoff | done (a7d6c84) |
+| 8 | Run history from transcripts | done (52ef899) |
+| 9 | Persist geometry and splitter positions | done (d07c42f) |
+| 10 | Keyboard pass | done (f56a5ef Esc, Ctrl+1/2; d07c42f Ctrl+F) |
+| 11 | Per-source "update only this" | done (d07c42f) |
+| 12 | i18n / gettext | not done (deliberately left for later) |
+| 13 | Tray detail surface | partial: per-source tooltip counts done (06ccc90); per-source "View" notification deep-link not done |
+| 14 | "No output for..." liveness hint | done (a7d6c84) |
+| 15 | Housekeeping | partial: test isolation done (df89086); autostart verification and CI screenshot smoke check not done |
+
+### Added beyond the 15
+
+- Reboot is a state, not an update: excluded from counts and the notification engine (06ccc90)
+- Forced re-check while snoozed (run finished, pacman db change) (06ccc90)
+- Missing `pacman-contrib` surfaced as a clear checker error (06ccc90)
+- Safe default left-click: shows updates instead of launching topgrade (06ccc90)
+- Error icon and Updates dialog opening for check errors / pending reboot (06ccc90, cb79511)
+- Notifications replace each other instead of stacking (06ccc90)
+- Settings and CLI tidy: every source listed, interval in minutes, autostart toggle, Restore Defaults, `--version`, exit-code epilog (6e53adc)
+- Test isolation fix: XDG dirs and QSettings isolated per test; the run-mode test no longer overwrites the real config.toml (df89086)
+- Closing the run window keeps the update running; Cancel asks first; desktop notification when a hidden run finishes or needs an answer (f56a5ef)
+

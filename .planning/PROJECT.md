@@ -46,6 +46,14 @@ Users never miss available system updates because the tray applet silently check
 - ✓ topgrade.toml alignment: `misc.only`, `topgrade.d/` merge, pikaur AUR helper — 2026-11
 - ✓ Single-instance tray lock — 2026-11
 - ✓ systemd user timer for headless checks — 2026-11
+- ✓ In-app run window with Simple/Verbose views, prompt bar with typed answers, and failure reasons — 2026-11
+- ✓ Closing the run window keeps the update running; Cancel asks first — 2026-11
+- ✓ Dry run to "Run for real" handoff — 2026-11
+- ✓ History window Runs tab (past run transcripts) — 2026-11
+- ✓ "Update only this source" from the Updates dialog — 2026-11
+- ✓ Remembered window geometry and keyboard shortcuts (Esc, Ctrl+1/2, Ctrl+F) — 2026-11
+- ✓ Honest counts: reboot not counted as an update; missing pacman-contrib surfaced — 2026-11
+- ✓ Settings polish (autostart toggle, interval in minutes, Restore Defaults) and CLI `--version` with exit-code docs — 2026-11
 
 ### Active
 
