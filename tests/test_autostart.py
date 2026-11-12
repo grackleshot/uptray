@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import topgrade_update.core.autostart as autostart
+import uptray.core.autostart as autostart
 
 
 def _point_at(tmp_path, monkeypatch):
     dest_dir = tmp_path / "autostart"
     monkeypatch.setattr(autostart, "AUTOSTART_DIR", dest_dir)
-    monkeypatch.setattr(autostart, "AUTOSTART_FILE", dest_dir / "topgrade-update-tray.desktop")
+    monkeypatch.setattr(autostart, "AUTOSTART_FILE", dest_dir / "uptray.desktop")
 
 
 def test_enable_creates_desktop_file(tmp_path, monkeypatch, capsys) -> None:
@@ -46,11 +46,11 @@ def test_autostart_exec_prefers_the_running_executable(monkeypatch) -> None:
     import importlib
     import sys
 
-    import topgrade_update.core.autostart as autostart_module
+    import uptray.core.autostart as autostart_module
 
-    monkeypatch.setattr(sys, "argv", ["/opt/tools/bin/topgrade-update", "--tray"])
+    monkeypatch.setattr(sys, "argv", ["/opt/tools/bin/uptray", "--tray"])
     try:
-        assert importlib.reload(autostart_module)._EXEC_PATH == "/opt/tools/bin/topgrade-update"
+        assert importlib.reload(autostart_module)._EXEC_PATH == "/opt/tools/bin/uptray"
     finally:
         monkeypatch.undo()
         importlib.reload(autostart_module)

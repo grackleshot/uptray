@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "topgrade-update"
+name = "uptray"
 version = "1.0.0"
-description = "An interactive update notifier & applier using topgrade"
+description = "A system tray update notifier for Arch-based Linux, powered by topgrade"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.10"
@@ -16,21 +16,21 @@ gui = ["PySide6>=6.5", "jeepney>=0.8"]
 dev = ["mypy>=1.0", "ruff>=0.5", "pytest>=8.0", "pytest-qt>=4.0"]
 
 [project.scripts]
-topgrade-update = "topgrade_update.cli.main:main"
+uptray = "uptray.cli.main:main"
 
 # Third-party plugins can register via:
-# [project.entry-points."topgrade_update.plugins"]
+# [project.entry-points."uptray.plugins"]
 # mychecker = "mypackage.plugins:MyChecker"
 
 [project.urls]
-Homepage = "https://github.com/grackleshot/topgrade-update"
+Homepage = "https://github.com/grackleshot/uptray"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/topgrade_update"]
+packages = ["src/uptray"]
 
 [tool.hatch.build.targets.wheel.shared-data]
-"icons/hicolor/scalable/apps/topgrade-update.svg" = "share/icons/hicolor/scalable/apps/topgrade-update.svg"
-"topgrade-update-tray.desktop" = "share/applications/topgrade-update-tray.desktop"
+"icons/hicolor/scalable/apps/uptray.svg" = "share/icons/hicolor/scalable/apps/uptray.svg"
+"uptray.desktop" = "share/applications/uptray.desktop"
 
 [tool.mypy]
 python_version = "3.10"

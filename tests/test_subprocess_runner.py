@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from topgrade_update.core.subprocess import run_checked
+from uptray.core.subprocess import run_checked
 
 
 def test_run_checked_echo_returns_zero_and_captures_stdout() -> None:

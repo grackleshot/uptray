@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from topgrade_update.core.links import upstream_url
+from uptray.core.links import upstream_url
 
 
 def _si_result(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -33,7 +33,7 @@ def test_reboot_has_no_link() -> None:
 
 
 def test_pacman_uses_packaged_url(monkeypatch) -> None:  # noqa: ANN001
-    monkeypatch.setattr("topgrade_update.core.links.shutil.which", lambda _n: "/usr/bin/pacman")
+    monkeypatch.setattr("uptray.core.links.shutil.which", lambda _n: "/usr/bin/pacman")
     si_output = "Repository      : extra\nURL             : https://firefox.org\n"
 
     url = upstream_url("firefox", "pacman", runner=lambda _cmd, **_kw: _si_result(si_output))
@@ -42,7 +42,7 @@ def test_pacman_uses_packaged_url(monkeypatch) -> None:  # noqa: ANN001
 
 
 def test_pacman_falls_back_to_search(monkeypatch) -> None:  # noqa: ANN001
-    monkeypatch.setattr("topgrade_update.core.links.shutil.which", lambda _n: "/usr/bin/pacman")
+    monkeypatch.setattr("uptray.core.links.shutil.which", lambda _n: "/usr/bin/pacman")
 
     url = upstream_url("unknown-pkg", "pacman", runner=lambda _c, **_k: _si_result("", 1))
 

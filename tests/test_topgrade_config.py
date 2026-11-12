@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from topgrade_update.core.topgrade_config import (
+from uptray.core.topgrade_config import (
     TOPGRADE_STEP_MAP,
     get_disabled_categories,
     get_disabled_steps,
@@ -71,6 +71,6 @@ def test_only_steps_restrict_non_listed_checkers() -> None:
     only = get_only_steps({"misc": {"only": ["flatpak", "git"]}})
 
     assert only == {"flatpak", "git"}
-    # git is not a topgrade-update checker, so only flatpak survives.
+    # git is not a uptray checker, so only flatpak survives.
     assert only_restricted_checkers(only) == {"pacman", "aur", "firmware"}
 

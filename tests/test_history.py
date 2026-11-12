@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from topgrade_update.core.history import parse_pacman_log
+from uptray.core.history import parse_pacman_log
 
 _SAMPLE_LOG = """\
 [2026-11-01T09:00:00+0000] [PACMAN] Running 'pacman -Syu'

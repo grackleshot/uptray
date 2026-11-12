@@ -1,0 +1,361 @@
+"""Configuration loading and management."""
+
+from __future__ import annotations
+
+import json
+import os
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any
+
+from uptray.core.models import (
+    Config,
+    CustomCommandConfig,
+    NotificationConfig,
+    SourceConfig,
+    TrayConfig,
+    custom_checker_name,
+)
+
+
+def _xdg_config_home() -> Path:
+    """Return the XDG config directory."""
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+
+
+def default_config_path() -> Path:
+    """Return the default configuration file path."""
+    return _xdg_config_home() / "uptray" / "config.toml"
+
+
+def _merge_source_config(raw: dict[str, Any]) -> SourceConfig:
+    """Build a SourceConfig from a raw dict."""
+    enabled = raw.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("source enabled settings must be true or false")
+    return SourceConfig(enabled=enabled)
+
+
+def _merge_notification_config(raw: dict[str, Any]) -> NotificationConfig:
+    """Build a NotificationConfig from a raw dict."""
+    enabled = raw.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("notifications.enabled must be true or false")
+    quiet_hours: dict[str, int | None] = {}
+    for key in ("quiet_hours_start", "quiet_hours_end"):
+        hour = raw.get(key)
+        if hour is not None and (
+            not isinstance(hour, int) or isinstance(hour, bool) or not 0 <= hour <= 23
+        ):
+            raise ValueError(f"notifications.{key} must be an integer from 0 to 23")
+        quiet_hours[key] = hour
+    sound = raw.get("sound", False)
+    if not isinstance(sound, bool):
+        raise ValueError("notifications.sound must be true or false")
+    return NotificationConfig(
+        enabled=enabled,
+        quiet_hours_start=quiet_hours["quiet_hours_start"],
+        quiet_hours_end=quiet_hours["quiet_hours_end"],
+        sound=sound,
+    )
+
+
+def _merge_tray_config(raw: dict[str, Any]) -> TrayConfig:
+    """Build a TrayConfig from a raw dict."""
+    click_action = raw.get("click_action", "default")
+    if not isinstance(click_action, str) or click_action not in {
+        "default",
+        "show_updates",
+        "run_topgrade",
+    }:
+        raise ValueError("tray.click_action must be default, show_updates, or run_topgrade")
+    snooze_hours = raw.get("snooze_hours", 4)
+    if (
+        not isinstance(snooze_hours, int)
+        or isinstance(snooze_hours, bool)
+        or not 1 <= snooze_hours <= 24
+    ):
+        raise ValueError("tray.snooze_hours must be an integer from 1 to 24")
+    icon_style = raw.get("icon_style", "default")
+    if not isinstance(icon_style, str) or icon_style not in {"default", "colorblind"}:
+        raise ValueError("tray.icon_style must be default or colorblind")
+    return TrayConfig(
+        click_action=click_action,
+        snooze_hours=snooze_hours,
+        icon_style=icon_style,
+    )
+
+
+def _parse_bool(value: str, variable: str) -> bool:
+    """Parse a conventional environment boolean value."""
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{variable} must be true or false")
+
+
+def _parse_env_int(value: str, variable: str) -> int:
+    """Parse an integer override with an actionable error message."""
+    try:
+        return int(value)
+    except ValueError as exc:
+        raise ValueError(f"{variable} must be an integer") from exc
+
+
+def _apply_environment_overrides(cfg: Config, environ: Mapping[str, str]) -> Config:
+    """Apply supported UPTRAY_* values over file and default settings."""
+    prefix = "UPTRAY_"
+    if f"{prefix}CHECK_INTERVAL" in environ:
+        interval = _parse_env_int(environ[f"{prefix}CHECK_INTERVAL"], f"{prefix}CHECK_INTERVAL")
+        if not 300 <= interval <= 86400:
+            raise ValueError(f"{prefix}CHECK_INTERVAL must be from 300 to 86400 seconds")
+        cfg.check_interval = interval
+
+    terminals_key = f"{prefix}TERMINALS"
+    if terminals_key in environ:
+        raw_terminals = environ[terminals_key]
+        cfg.terminals = raw_terminals.split(os.pathsep) if raw_terminals else []
+        if not all(cfg.terminals):
+            raise ValueError(f"{terminals_key} must contain non-empty command names")
+
+    source_prefix = f"{prefix}SOURCE_"
+    source_overrides: dict[str, bool] = {}
+    for key, value in environ.items():
+        if not key.startswith(source_prefix):
+            continue
+        if not key.endswith("_ENABLED"):
+            raise ValueError(f"{key} must end in _ENABLED")
+        raw_name = key[len(source_prefix):-len("_ENABLED")]
+        if not raw_name or raw_name != raw_name.upper():
+            raise ValueError(f"{key} must contain an uppercase source name")
+        source = raw_name.lower()
+        enabled = _parse_bool(value, key)
+        source_overrides[source] = enabled
+        cfg.sources.setdefault(source, SourceConfig()).enabled = enabled
+
+    for command in cfg.custom_commands:
+        source = custom_checker_name(command.name)
+        if source in source_overrides:
+            command.enabled = source_overrides[source]
+
+    notifications = {
+        "enabled": cfg.notifications.enabled,
+        "quiet_hours_start": cfg.notifications.quiet_hours_start,
+        "quiet_hours_end": cfg.notifications.quiet_hours_end,
+        "sound": cfg.notifications.sound,
+    }
+    notification_env = {
+        "enabled": f"{prefix}NOTIFICATIONS_ENABLED",
+        "quiet_hours_start": f"{prefix}QUIET_HOURS_START",
+        "quiet_hours_end": f"{prefix}QUIET_HOURS_END",
+        "sound": f"{prefix}NOTIFICATIONS_SOUND",
+    }
+    for field_name, variable in notification_env.items():
+        if variable not in environ:
+            continue
+        value = environ[variable]
+        notifications[field_name] = (
+            _parse_env_int(value, variable)
+            if field_name.startswith("quiet_hours")
+            else _parse_bool(value, variable)
+        )
+    cfg.notifications = _merge_notification_config(notifications)
+
+    tray = {
+        "click_action": cfg.tray.click_action,
+        "snooze_hours": cfg.tray.snooze_hours,
+        "icon_style": cfg.tray.icon_style,
+    }
+    click_action_key = f"{prefix}TRAY_CLICK_ACTION"
+    snooze_hours_key = f"{prefix}TRAY_SNOOZE_HOURS"
+    icon_style_key = f"{prefix}TRAY_ICON_STYLE"
+    if click_action_key in environ:
+        tray["click_action"] = environ[click_action_key]
+    if snooze_hours_key in environ:
+        tray["snooze_hours"] = _parse_env_int(environ[snooze_hours_key], snooze_hours_key)
+    if icon_style_key in environ:
+        tray["icon_style"] = environ[icon_style_key]
+    cfg.tray = _merge_tray_config(tray)
+
+    run_mode_key = f"{prefix}RUN_MODE"
+    if run_mode_key in environ:
+        run_mode = environ[run_mode_key]
+        if run_mode not in {"simple", "verbose"}:
+            raise ValueError(f"{run_mode_key} must be simple or verbose")
+        cfg.run_mode = run_mode
+    return cfg
+
+
+def _merge_custom_command(raw: dict[str, Any]) -> CustomCommandConfig:
+    """Build a validated custom-command config from a raw TOML table."""
+    name = raw.get("name")
+    command = raw.get("command")
+    enabled = raw.get("enabled", True)
+    if not isinstance(name, str) or not name.strip():
+        raise ValueError("each sources.custom_commands entry needs a non-empty name")
+    name = name.strip()
+    if not isinstance(command, list) or not command or not all(
+        isinstance(arg, str) and arg for arg in command
+    ):
+        raise ValueError(f"custom command {name!r} must have a non-empty command list")
+    if not isinstance(enabled, bool):
+        raise ValueError(f"custom command {name!r} enabled must be true or false")
+    return CustomCommandConfig(name=name, command=command, enabled=enabled)
+
+
+def load_config(
+    path: Path | None = None,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> Config:
+    """Load configuration from TOML file, falling back to defaults.
+
+    Args:
+        path: Explicit config file path. If None, uses the default XDG location.
+        environ: Environment mapping used for overrides. Defaults to ``os.environ``.
+
+    Returns:
+        A Config instance merged from defaults and the file.
+    """
+    if path is None:
+        path = default_config_path()
+
+    cfg = Config()
+
+    raw: dict[str, Any] = {}
+    if path.exists():
+        try:
+            import tomllib  # type: ignore[import-not-found]
+        except ImportError:
+            import tomli as tomllib  # type: ignore[import-not-found,unused-ignore]
+
+        with path.open("rb") as f:
+            raw = tomllib.load(f)
+
+    if "check_interval" in raw:
+        interval = raw["check_interval"]
+        if (
+            not isinstance(interval, int)
+            or isinstance(interval, bool)
+            or not 300 <= interval <= 86400
+        ):
+            raise ValueError("check_interval must be an integer from 300 to 86400 seconds")
+        cfg.check_interval = interval
+
+    if "terminals" in raw:
+        terminals = raw["terminals"]
+        if not isinstance(terminals, list) or not all(
+            isinstance(terminal, str) and terminal for terminal in terminals
+        ):
+            raise ValueError("terminals must be a list of non-empty command names")
+        cfg.terminals = terminals
+
+    if "run_mode" in raw:
+        run_mode = raw["run_mode"]
+        if not isinstance(run_mode, str) or run_mode not in {"simple", "verbose"}:
+            raise ValueError("run_mode must be simple or verbose")
+        cfg.run_mode = run_mode
+
+    if "sources" in raw:
+        sources = raw["sources"]
+        if not isinstance(sources, dict):
+            raise ValueError("sources must be a TOML table")
+        for name, src_raw in sources.items():
+            if name == "custom_commands":
+                if not isinstance(src_raw, list):
+                    raise ValueError("sources.custom_commands must be an array of tables")
+                cfg.custom_commands = [
+                    _merge_custom_command(item)
+                    for item in src_raw
+                    if isinstance(item, dict)
+                ]
+                if len(cfg.custom_commands) != len(src_raw):
+                    raise ValueError("each sources.custom_commands entry must be a table")
+                names = [custom_checker_name(command.name) for command in cfg.custom_commands]
+                if len(names) != len(set(names)):
+                    raise ValueError("custom command names must be unique")
+                continue
+            if not isinstance(src_raw, dict):
+                raise ValueError(f"sources.{name} must be a TOML table")
+            cfg.sources[name] = _merge_source_config(src_raw)
+
+    if "notifications" in raw:
+        if not isinstance(raw["notifications"], dict):
+            raise ValueError("notifications must be a TOML table")
+        cfg.notifications = _merge_notification_config(raw["notifications"])
+
+    if "tray" in raw:
+        if not isinstance(raw["tray"], dict):
+            raise ValueError("tray must be a TOML table")
+        cfg.tray = _merge_tray_config(raw["tray"])
+
+    return _apply_environment_overrides(cfg, os.environ if environ is None else environ)
+
+
+def save_run_mode(mode: str, path: Path | None = None) -> Config:
+    """Persist only ``run_mode``, preserving any newer on-disk settings.
+
+    Reloads the current config file before writing so a stale in-memory Config
+    (e.g. from an open run window) cannot overwrite tray/settings changes.
+    """
+    if mode not in {"simple", "verbose"}:
+        raise ValueError("run_mode must be simple or verbose")
+    cfg = load_config(path, environ={})
+    cfg.run_mode = mode
+    save_config(cfg, path)
+    return cfg
+
+
+def save_config(cfg: Config, path: Path | None = None) -> None:
+    """Save configuration to TOML file.
+
+    Args:
+        cfg: The configuration to save.
+        path: Explicit config file path. If None, uses the default XDG location.
+    """
+    if path is None:
+        path = default_config_path()
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    lines: list[str] = [
+        f"check_interval = {cfg.check_interval}",
+        f"terminals = {json.dumps(cfg.terminals, ensure_ascii=False)}",
+        f"run_mode = {json.dumps(cfg.run_mode, ensure_ascii=False)}",
+        "",
+        "[notifications]",
+        f"enabled = {str(cfg.notifications.enabled).lower()}",
+    ]
+    if cfg.notifications.quiet_hours_start is not None:
+        lines.append(f"quiet_hours_start = {cfg.notifications.quiet_hours_start}")
+    if cfg.notifications.quiet_hours_end is not None:
+        lines.append(f"quiet_hours_end = {cfg.notifications.quiet_hours_end}")
+    if cfg.notifications.sound:
+        lines.append(f"sound = {str(cfg.notifications.sound).lower()}")
+
+    lines.append("")
+    lines.append("[tray]")
+    lines.append(f"click_action = {json.dumps(cfg.tray.click_action, ensure_ascii=False)}")
+    lines.append(f"snooze_hours = {cfg.tray.snooze_hours}")
+    if cfg.tray.icon_style != "default":
+        lines.append(f"icon_style = {json.dumps(cfg.tray.icon_style)}")
+    lines.append("")
+    for name, src in cfg.sources.items():
+        lines.append(f"[sources.{json.dumps(name, ensure_ascii=False)}]")
+        lines.append(f"enabled = {str(src.enabled).lower()}")
+        lines.append("")
+
+    for custom in cfg.custom_commands:
+        lines.extend(
+            [
+                "[[sources.custom_commands]]",
+                f"name = {json.dumps(custom.name, ensure_ascii=False)}",
+                f"command = {json.dumps(custom.command, ensure_ascii=False)}",
+                f"enabled = {str(custom.enabled).lower()}",
+                "",
+            ]
+        )
+
+    path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")

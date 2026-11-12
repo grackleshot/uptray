@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from topgrade_update.core.checkers import facade
+from uptray.core.checkers import facade
 
 
 def test_get_topgrade_disabled_checkers_maps_topgrade_toml_steps(tmp_path, monkeypatch) -> None:

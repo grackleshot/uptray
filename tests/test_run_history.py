@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from topgrade_update.core.run_history import list_runs, summarize_run
+from uptray.core.run_history import list_runs, summarize_run
 
 if TYPE_CHECKING:
     from pathlib import Path

@@ -9,8 +9,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QKeyEvent  # noqa: E402
 
-from topgrade_update.gui import terminal_widget as terminal_mod  # noqa: E402
-from topgrade_update.gui.terminal_widget import TerminalWidget  # noqa: E402
+from uptray.gui import terminal_widget as terminal_mod  # noqa: E402
+from uptray.gui.terminal_widget import TerminalWidget  # noqa: E402
 
 
 def test_fallback_backspace_emits_delete(

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from topgrade_update.core.topgrade_session import (
+from uptray.core.topgrade_session import (
     OutputChunk,
     PromptCleared,
     PromptRequest,
@@ -212,7 +212,7 @@ def test_session_default_log_paths_are_unique(tmp_path: Path) -> None:
 
 
 def test_sudo_askpass_wrapper_invokes_real_sudo_with_dash_a(tmp_path: Path) -> None:
-    from topgrade_update.core.topgrade_session import _sudo_askpass_wrapper_dir
+    from uptray.core.topgrade_session import _sudo_askpass_wrapper_dir
 
     real = tmp_path / "real-sudo"
     real.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
@@ -336,7 +336,7 @@ def test_diagnose_prompt_includes_reason_when_known(tmp_path: Path) -> None:
 def test_private_runtime_dir_rejects_shared_or_missing_dirs(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from topgrade_update.core.topgrade_session import private_runtime_dir
+    from uptray.core.topgrade_session import private_runtime_dir
 
     private = tmp_path / "private"
     private.mkdir(mode=0o700)
@@ -355,14 +355,14 @@ def test_private_runtime_dir_rejects_shared_or_missing_dirs(
 def test_sudo_helpers_never_use_a_predictable_tmp_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     import stat
 
-    from topgrade_update.core import topgrade_session
+    from uptray.core import topgrade_session
 
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     topgrade_session._private_dir.cache_clear()
     try:
         wrapper_dir = Path(topgrade_session._sudo_askpass_wrapper_dir("/usr/bin/sudo"))
         base = wrapper_dir.parent
-        assert base != Path(f"/tmp/topgrade-update-{os.getuid()}")
+        assert base != Path(f"/tmp/uptray-{os.getuid()}")
         assert stat.S_IMODE(base.stat().st_mode) == 0o700
         assert base.stat().st_uid == os.getuid()
     finally:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from topgrade_update.core.state import (
+from uptray.core.state import (
     AppState,
     format_snooze,
     load_state,

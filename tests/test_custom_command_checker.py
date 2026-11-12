@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from topgrade_update.core.checkers.builtins import CustomCommandChecker
+from uptray.core.checkers.builtins import CustomCommandChecker
 
 
 def test_custom_checker_has_unique_names() -> None:
@@ -46,7 +46,7 @@ def test_custom_checker_raises_on_command_error() -> None:
     )
 
     with (
-        patch("topgrade_update.core.checkers.builtins.run_checked", return_value=failed),
+        patch("uptray.core.checkers.builtins.run_checked", return_value=failed),
         pytest.raises(RuntimeError, match="permission denied"),
     ):
         checker.check()
@@ -59,5 +59,5 @@ def test_custom_checker_accepts_empty_success() -> None:
         args=["custom-command"], returncode=0, stdout="", stderr=""
     )
 
-    with patch("topgrade_update.core.checkers.builtins.run_checked", return_value=successful):
+    with patch("uptray.core.checkers.builtins.run_checked", return_value=successful):
         assert checker.check() == []

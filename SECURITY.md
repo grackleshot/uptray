@@ -1,6 +1,6 @@
 # Security policy
 
-topgrade-update runs `topgrade` (and through it `sudo`) on your behalf, so
+uptray runs `topgrade` (and through it `sudo`) on your behalf, so
 security reports are taken seriously.
 
 ## Reporting a vulnerability
@@ -10,7 +10,7 @@ and choose **Report a vulnerability**. Don't open a public issue for security
 problems.
 
 Include what you found, how to reproduce it, and the version
-(`topgrade-update --version`).
+(`uptray --version`).
 
 ## Supported versions
 

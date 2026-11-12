@@ -7,11 +7,11 @@ from pathlib import Path
 
 import pytest
 
-from topgrade_update.core.models import CheckResult, Config, NotificationConfig, TrayConfig, Update
+from uptray.core.models import CheckResult, Config, NotificationConfig, TrayConfig, Update
 
 pytest.importorskip("PySide6")
 
-from topgrade_update.gui.tray import APP_NAME, Tray  # noqa: E402
+from uptray.gui.tray import APP_NAME, Tray  # noqa: E402
 
 
 @pytest.fixture
@@ -97,8 +97,8 @@ def test_partial_check_failure_is_visible_in_status_and_tooltip(
     def capture_notification(_results: list[CheckResult], **kwargs: object) -> None:
         sent_notifications.append(kwargs)
 
-    monkeypatch.setattr("topgrade_update.gui.tray.send_notification", capture_notification)
-    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", lambda: [])
+    monkeypatch.setattr("uptray.gui.tray.send_notification", capture_notification)
+    monkeypatch.setattr("uptray.gui.tray.maintenance_summary", lambda: [])
     results = [
         CheckResult(
             source="pacman",
@@ -145,8 +145,8 @@ def test_reboot_sends_critical_notification_once(
         urgency = str(kwargs.get("urgency"))
         messages.append((summary, body, urgency))
 
-    monkeypatch.setattr("topgrade_update.gui.tray.send_message", capture_message)
-    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", lambda: [])
+    monkeypatch.setattr("uptray.gui.tray.send_message", capture_message)
+    monkeypatch.setattr("uptray.gui.tray.maintenance_summary", lambda: [])
     reboot_result = CheckResult(
         source="reboot",
         updates=[Update("kernel", "6.6", "reboot required", "reboot")],
@@ -169,8 +169,8 @@ def test_reboot_flag_resets_when_no_longer_pending(
     tray: Tray,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("topgrade_update.gui.tray.send_message", lambda *a, **k: None)
-    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", lambda: [])
+    monkeypatch.setattr("uptray.gui.tray.send_message", lambda *a, **k: None)
+    monkeypatch.setattr("uptray.gui.tray.maintenance_summary", lambda: [])
     reboot_result = CheckResult(
         source="reboot",
         updates=[Update("kernel", "6.6", "reboot required", "reboot")],
@@ -193,14 +193,14 @@ def test_maintenance_reminder_fires_after_updates_clear(
     def capture_message(summary: str, body: str, **_kwargs: object) -> None:
         messages.append((summary, body))
 
-    monkeypatch.setattr("topgrade_update.gui.tray.send_message", capture_message)
+    monkeypatch.setattr("uptray.gui.tray.send_message", capture_message)
 
-    from topgrade_update.core.maintenance import MaintenanceFinding
+    from uptray.core.maintenance import MaintenanceFinding
 
     def fake_summary(**_kwargs: object) -> list[MaintenanceFinding]:
         return [MaintenanceFinding("orphans", "2 orphan package(s)", ["a", "b"])]
 
-    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", fake_summary)
+    monkeypatch.setattr("uptray.gui.tray.maintenance_summary", fake_summary)
 
     with_updates = CheckResult(
         source="pacman", updates=[Update("pkg", "1", "2", "pacman")]
@@ -223,10 +223,10 @@ def test_news_menu_and_mark_read(
     tray: Tray,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from topgrade_update.core.arch_news import NewsItem
+    from uptray.core.arch_news import NewsItem
 
     opened: list[str] = []
-    monkeypatch.setattr("topgrade_update.gui.tray.open_url", lambda url: opened.append(url))
+    monkeypatch.setattr("uptray.gui.tray.open_url", lambda url: opened.append(url))
 
     fresh = NewsItem(
         "Fresh news", "https://archlinux.org/news/fresh/", datetime.now() + timedelta(hours=1)
@@ -285,7 +285,7 @@ def test_offline_check_defers_and_retries(
         state_path=tmp_path / "state.json",
         debounce_ms=10,
     )
-    monkeypatch.setattr("topgrade_update.gui.tray.is_online", lambda: False)
+    monkeypatch.setattr("uptray.gui.tray.is_online", lambda: False)
 
     tray._start_check()
 
@@ -319,7 +319,7 @@ def test_open_run_window_starts_new_run_after_finished(
         def show(self) -> None:
             return None
 
-    monkeypatch.setattr("topgrade_update.gui.tray.RunWindow", FakeWindow)
+    monkeypatch.setattr("uptray.gui.tray.RunWindow", FakeWindow)
     tray._run_window = FakeWindow()
     tray._open_run_window([])
     assert len(created) == 2
@@ -346,7 +346,7 @@ def test_open_run_window_reshows_hidden_running_window(
         def activateWindow(self) -> None:  # noqa: N802
             return None
 
-    monkeypatch.setattr("topgrade_update.gui.tray.RunWindow", FakeWindow)
+    monkeypatch.setattr("uptray.gui.tray.RunWindow", FakeWindow)
     tray._run_window = FakeWindow()
 
     tray._open_run_window([])
@@ -373,7 +373,7 @@ def test_quit_stops_running_window_before_quitting(
             calls.append("window")
 
     monkeypatch.setattr(
-        "topgrade_update.gui.tray.QApplication.quit", lambda: calls.append("quit")
+        "uptray.gui.tray.QApplication.quit", lambda: calls.append("quit")
     )
     tray._run_window = FakeWindow()
 
@@ -399,8 +399,8 @@ def _patch_check_thread(tray: Tray, monkeypatch: pytest.MonkeyPatch) -> list[int
         def start(self) -> None:
             started.append(1)
 
-    monkeypatch.setattr("topgrade_update.gui.tray.CheckThread", FakeThread)
-    monkeypatch.setattr("topgrade_update.gui.tray.is_online", lambda: True)
+    monkeypatch.setattr("uptray.gui.tray.CheckThread", FakeThread)
+    monkeypatch.setattr("uptray.gui.tray.is_online", lambda: True)
     return started
 
 
@@ -418,8 +418,8 @@ def test_reboot_flag_stays_false_while_snoozed(
     tray: Tray, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     sent: list[str] = []
-    monkeypatch.setattr("topgrade_update.gui.tray.send_message", lambda s, *a, **k: sent.append(s))
-    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", lambda: [])
+    monkeypatch.setattr("uptray.gui.tray.send_message", lambda s, *a, **k: sent.append(s))
+    monkeypatch.setattr("uptray.gui.tray.maintenance_summary", lambda: [])
     tray._snooze(1)
     reboot = CheckResult(
         source="reboot", updates=[Update("kernel", "", "reboot required", "reboot")]
@@ -463,7 +463,7 @@ def test_show_updates_opens_dialog_on_errors(
         def exec(self) -> int:
             return 0
 
-    monkeypatch.setattr("topgrade_update.gui.tray.UpdatesDialog", FakeDialog)
+    monkeypatch.setattr("uptray.gui.tray.UpdatesDialog", FakeDialog)
     tray._results = [CheckResult(source="pacman", error="boom")]
 
     tray._show_updates()

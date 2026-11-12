@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from topgrade_update.gui.icons import IconCache
+from uptray.gui.icons import IconCache
 
 
 def test_default_and_colorblind_styles_are_selectable(qapp) -> None:  # noqa: ANN001

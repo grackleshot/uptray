@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from topgrade_update.core.checkers.reboot import RebootRequiredChecker
+from uptray.core.checkers.reboot import RebootRequiredChecker
 
 
 def test_reboot_checker_no_reboot_required(tmp_path: Path, monkeypatch: object) -> None:

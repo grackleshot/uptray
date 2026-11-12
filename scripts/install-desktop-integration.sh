@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Install desktop integration files (icon + .desktop file) for topgrade-update.
+# Install desktop integration files (icon + .desktop file) for uptray.
 # Usage: ./scripts/install-desktop-integration.sh [--systemd-timer]
 #   --systemd-timer  Also install and enable a systemd user timer that runs
-#                    `topgrade-update --check` at boot and every 6 hours.
+#                    `uptray --check` at boot and every 6 hours.
 
 set -euo pipefail
 
@@ -28,14 +28,14 @@ DESKTOP_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
 
 echo "Installing icon to $ICON_DIR..."
 mkdir -p "$ICON_DIR"
-cp "$PROJECT_DIR/icons/hicolor/scalable/apps/topgrade-update.svg" "$ICON_DIR/"
+cp "$PROJECT_DIR/icons/hicolor/scalable/apps/uptray.svg" "$ICON_DIR/"
 
 echo "Installing desktop file to $DESKTOP_DIR..."
 mkdir -p "$DESKTOP_DIR"
 # Absolute Exec path: ~/.local/bin is not always on the desktop session's PATH.
-BIN="$(command -v topgrade-update || true)"
-sed "s|^Exec=topgrade-update|Exec=${BIN:-topgrade-update}|" \
-    "$PROJECT_DIR/topgrade-update-tray.desktop" > "$DESKTOP_DIR/topgrade-update-tray.desktop"
+BIN="$(command -v uptray || true)"
+sed "s|^Exec=uptray|Exec=${BIN:-uptray}|" \
+    "$PROJECT_DIR/uptray.desktop" > "$DESKTOP_DIR/uptray.desktop"
 
 echo "Updating icon cache..."
 if command -v gtk-update-icon-cache &>/dev/null; then
@@ -49,12 +49,12 @@ if [[ "$INSTALL_TIMER" -eq 1 ]]; then
         TIMER_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
         echo "Installing systemd user units to $TIMER_DIR..."
         mkdir -p "$TIMER_DIR"
-        cp "$PROJECT_DIR/systemd/topgrade-update.service" "$TIMER_DIR/"
-        cp "$PROJECT_DIR/systemd/topgrade-update.timer" "$TIMER_DIR/"
+        cp "$PROJECT_DIR/systemd/uptray.service" "$TIMER_DIR/"
+        cp "$PROJECT_DIR/systemd/uptray.timer" "$TIMER_DIR/"
         systemctl --user daemon-reload
-        systemctl --user enable --now topgrade-update.timer
-        echo "Timer enabled. Adjust with: systemctl --user edit --full topgrade-update.timer"
+        systemctl --user enable --now uptray.timer
+        echo "Timer enabled. Adjust with: systemctl --user edit --full uptray.timer"
     fi
 fi
 
-echo "Done. Run 'topgrade-update --tray --enable' to enable autostart."
+echo "Done. Run 'uptray --tray --enable' to enable autostart."

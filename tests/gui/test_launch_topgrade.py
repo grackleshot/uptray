@@ -8,15 +8,15 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from topgrade_update.gui.tray import launch_topgrade_in_terminal  # noqa: E402
+from uptray.gui.tray import launch_topgrade_in_terminal  # noqa: E402
 
 
 def test_launch_topgrade_reports_when_topgrade_is_missing(monkeypatch) -> None:
-    monkeypatch.setattr("topgrade_update.gui.tray.shutil.which", lambda _command: None)
+    monkeypatch.setattr("uptray.gui.tray.shutil.which", lambda _command: None)
 
     with (
-        patch("topgrade_update.gui.tray.find_terminal") as find_terminal,
-        patch("topgrade_update.gui.tray.send_message") as send_message,
+        patch("uptray.gui.tray.find_terminal") as find_terminal,
+        patch("uptray.gui.tray.send_message") as send_message,
     ):
         launch_topgrade_in_terminal()
 
@@ -28,15 +28,15 @@ def test_launch_topgrade_reports_when_topgrade_is_missing(monkeypatch) -> None:
 
 def test_launch_topgrade_uses_detected_terminal(monkeypatch) -> None:
     monkeypatch.setattr(
-        "topgrade_update.gui.tray.shutil.which", lambda command: "/usr/bin/topgrade"
+        "uptray.gui.tray.shutil.which", lambda command: "/usr/bin/topgrade"
     )
 
     with (
         patch(
-            "topgrade_update.gui.tray.find_terminal",
+            "uptray.gui.tray.find_terminal",
             return_value=("/usr/bin/kitty", ["-e"]),
         ),
-        patch("topgrade_update.gui.tray.subprocess.Popen") as popen,
+        patch("uptray.gui.tray.subprocess.Popen") as popen,
     ):
         launch_topgrade_in_terminal()
 

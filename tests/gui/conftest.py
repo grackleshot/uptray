@@ -12,12 +12,12 @@ def sent_messages(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     """
     sent: list[tuple[str, str]] = []
     try:
-        import topgrade_update.gui.run_window  # noqa: F401
+        import uptray.gui.run_window  # noqa: F401
     except ImportError:  # PySide6 missing: GUI tests skip themselves
         return sent
     for target in ("run_window", "diagnose_panel"):
         monkeypatch.setattr(
-            f"topgrade_update.gui.{target}.send_message",
+            f"uptray.gui.{target}.send_message",
             lambda summary, body, **_kw: sent.append((summary, body)),
         )
     return sent
@@ -31,7 +31,7 @@ def _no_real_update_checks() -> object:
     exit makes Qt abort the whole test process (exit 134 on CI).
     """
     try:
-        from topgrade_update.gui.tray import CheckThread
+        from uptray.gui.tray import CheckThread
     except ImportError:  # PySide6 missing: GUI tests skip themselves
         yield None
         return

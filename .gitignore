@@ -22,7 +22,7 @@ Thumbs.db
 *.legacy
 
 # Logs
-.local/share/topgrade-update/log
+.local/share/uptray/log
 
 # Personal dev tooling and notes (kept locally, not published)
 .pi/

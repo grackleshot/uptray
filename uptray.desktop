@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Uptray
+Comment=Tray applet that shows system updates and applies them with topgrade
+Exec=uptray --tray
+Icon=uptray
+Terminal=false
+X-KDE-autostart-phase=2
+Categories=System;Utilities;
+Keywords=updates;pacman;aur;flatpak;topgrade;

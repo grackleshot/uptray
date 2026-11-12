@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Install (or reinstall) topgrade-update on an Arch-based PC such as CachyOS,
+# Install (or reinstall) uptray on an Arch-based PC such as CachyOS,
 # straight from GitHub. Safe to re-run. Update later with:
-#   uv tool upgrade topgrade-update
+#   uv tool upgrade uptray
 
 set -euo pipefail
 
@@ -15,7 +15,7 @@ signs in with the GitHub CLI (gh) so git and uv can fetch it.
 USAGE
 }
 
-REPO="grackleshot/topgrade-update"
+REPO="grackleshot/uptray"
 # shortcut: PySide6 6.11 requires Python < 3.15; bump once PySide6 supports newer.
 PYTHON="3.14"
 
@@ -66,11 +66,22 @@ if ! GIT_TERMINAL_PROMPT=0 GIT_ASKPASS=true git ls-remote "https://github.com/$R
     gh auth setup-git
 fi
 
-step "Installing topgrade-update from github.com/$REPO (main)"
-uv tool install --force --python "$PYTHON" "topgrade-update[gui] @ git+https://github.com/$REPO.git"
+# The app used to be called topgrade-update: remove that install so only one remains.
+if uv tool list 2>/dev/null | grep -q '^topgrade-update '; then
+    step "Removing the old topgrade-update install"
+    uv tool uninstall topgrade-update
+    rm -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/topgrade-update-tray.desktop" \
+        "${XDG_DATA_HOME:-$HOME/.local/share}/icons/hicolor/scalable/apps/topgrade-update.svg"
+fi
+if pgrep -f "topgrade-update --tray" >/dev/null; then
+    echo "An old topgrade-update tray is still running: quit it from its tray menu." >&2
+fi
+
+step "Installing uptray from github.com/$REPO (main)"
+uv tool install --force --python "$PYTHON" "uptray[gui] @ git+https://github.com/$REPO.git"
 BIN_DIR="$(uv tool dir --bin)"
-BIN="$BIN_DIR/topgrade-update"
-export PATH="$BIN_DIR:$PATH"  # this copy wins over any other topgrade-update
+BIN="$BIN_DIR/uptray"
+export PATH="$BIN_DIR:$PATH"  # this copy wins over any other uptray
 
 step "Installing the app menu entry and icon"
 src="$(mktemp -d)"
@@ -83,10 +94,10 @@ if ((AUTOSTART)); then
     "$BIN" --tray --enable
 fi
 
-if [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] && ! pgrep -f "topgrade-update --tray" >/dev/null; then
+if [[ -n "${WAYLAND_DISPLAY:-}${DISPLAY:-}" ]] && ! pgrep -f "uptray --tray" >/dev/null; then
     step "Starting the tray applet now"
     setsid -f "$BIN" --tray >/dev/null 2>&1 < /dev/null
 fi
 
 step "Done: $("$BIN" --version)"
-echo "Update later with:  uv tool upgrade topgrade-update"
+echo "Update later with:  uv tool upgrade uptray"

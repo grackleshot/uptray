@@ -4,7 +4,7 @@ import os
 
 import pytest
 
-from topgrade_update.core.config import load_config
+from uptray.core.config import load_config
 
 
 def test_load_config_reads_tray_settings(tmp_path) -> None:
@@ -44,8 +44,8 @@ def test_load_config_reads_run_mode(tmp_path) -> None:
 
 
 def test_save_run_mode_preserves_newer_settings(tmp_path) -> None:
-    from topgrade_update.core.config import save_config, save_run_mode
-    from topgrade_update.core.models import Config, NotificationConfig
+    from uptray.core.config import save_config, save_run_mode
+    from uptray.core.models import Config, NotificationConfig
 
     path = tmp_path / "config.toml"
     stale = Config(
@@ -120,14 +120,14 @@ enabled = false
     cfg = load_config(
         config_path,
         environ={
-            "TOPGRADE_UPDATE_CHECK_INTERVAL": "900",
-            "TOPGRADE_UPDATE_TERMINALS": os.pathsep.join(["kitty", "alacritty"]),
-            "TOPGRADE_UPDATE_SOURCE_PACMAN_ENABLED": "true",
-            "TOPGRADE_UPDATE_SOURCE_CUSTOM_MY_CHECK_ENABLED": "yes",
-            "TOPGRADE_UPDATE_NOTIFICATIONS_ENABLED": "on",
-            "TOPGRADE_UPDATE_QUIET_HOURS_START": "23",
-            "TOPGRADE_UPDATE_TRAY_CLICK_ACTION": "run_topgrade",
-            "TOPGRADE_UPDATE_TRAY_SNOOZE_HOURS": "8",
+            "UPTRAY_CHECK_INTERVAL": "900",
+            "UPTRAY_TERMINALS": os.pathsep.join(["kitty", "alacritty"]),
+            "UPTRAY_SOURCE_PACMAN_ENABLED": "true",
+            "UPTRAY_SOURCE_CUSTOM_MY_CHECK_ENABLED": "yes",
+            "UPTRAY_NOTIFICATIONS_ENABLED": "on",
+            "UPTRAY_QUIET_HOURS_START": "23",
+            "UPTRAY_TRAY_CLICK_ACTION": "run_topgrade",
+            "UPTRAY_TRAY_SNOOZE_HOURS": "8",
         },
     )
 
@@ -145,7 +145,7 @@ enabled = false
 def test_environment_overrides_apply_without_a_config_file(tmp_path) -> None:
     cfg = load_config(
         tmp_path / "missing.toml",
-        environ={"TOPGRADE_UPDATE_CHECK_INTERVAL": "1200"},
+        environ={"UPTRAY_CHECK_INTERVAL": "1200"},
     )
 
     assert cfg.check_interval == 1200
@@ -154,9 +154,9 @@ def test_environment_overrides_apply_without_a_config_file(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("variable", "value", "error_match"),
     [
-        ("TOPGRADE_UPDATE_CHECK_INTERVAL", "later", "CHECK_INTERVAL"),
-        ("TOPGRADE_UPDATE_NOTIFICATIONS_ENABLED", "sometimes", "NOTIFICATIONS_ENABLED"),
-        ("TOPGRADE_UPDATE_QUIET_HOURS_START", "24", "quiet_hours_start"),
+        ("UPTRAY_CHECK_INTERVAL", "later", "CHECK_INTERVAL"),
+        ("UPTRAY_NOTIFICATIONS_ENABLED", "sometimes", "NOTIFICATIONS_ENABLED"),
+        ("UPTRAY_QUIET_HOURS_START", "24", "quiet_hours_start"),
     ],
 )
 def test_environment_overrides_are_validated(tmp_path, variable, value, error_match) -> None:

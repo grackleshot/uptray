@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from topgrade_update.core.models import CheckResult, Update
-from topgrade_update.core.notification_engine import NotificationEngine
-from topgrade_update.core.quiet_hours import is_quiet_hours
+from uptray.core.models import CheckResult, Update
+from uptray.core.notification_engine import NotificationEngine
+from uptray.core.quiet_hours import is_quiet_hours
 
 
 def _result(source: str, count: int) -> CheckResult:
@@ -86,7 +86,7 @@ def test_is_quiet_hours_is_disabled_when_unset_or_equal() -> None:
 
 
 def test_reboot_is_not_counted_as_an_update() -> None:
-    from topgrade_update.core.checkers import total_updates
+    from uptray.core.checkers import total_updates
 
     results = [_result("pacman", 1), _result("reboot", 1)]
     engine = NotificationEngine()

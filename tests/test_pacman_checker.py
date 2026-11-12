@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from topgrade_update.core.checkers.builtins import (
+from uptray.core.checkers.builtins import (
     _parse_checkupdates_line as parse_line,
 )
 
@@ -49,11 +49,11 @@ def test_parse_tab_separated() -> None:
 def test_missing_checkupdates_raises_install_hint(monkeypatch) -> None:  # noqa: ANN001
     import pytest
 
-    from topgrade_update.core.checkers.builtins import PacmanChecker
-    from topgrade_update.core.engine import UpdateEngine
+    from uptray.core.checkers.builtins import PacmanChecker
+    from uptray.core.engine import UpdateEngine
 
     monkeypatch.setattr(
-        "topgrade_update.core.checkers.builtins.shutil.which",
+        "uptray.core.checkers.builtins.shutil.which",
         lambda name: "/usr/bin/pacman" if name == "pacman" else None,
     )
     checker = PacmanChecker()

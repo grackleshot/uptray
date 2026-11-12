@@ -6,17 +6,17 @@ from datetime import datetime, timezone
 
 import pytest
 
-from topgrade_update.core.history import PackageChange, UpgradeSession
-from topgrade_update.core.maintenance import MaintenanceFinding
-from topgrade_update.core.models import CheckResult, Update
+from uptray.core.history import PackageChange, UpgradeSession
+from uptray.core.maintenance import MaintenanceFinding
+from uptray.core.models import CheckResult, Update
 
 pytest.importorskip("PySide6")
 
 from PySide6.QtGui import QKeySequence, QShortcut  # noqa: E402
 from PySide6.QtWidgets import QTreeWidget  # noqa: E402
 
-from topgrade_update.core.topgrade_config import ONLY_STEP_FOR_SOURCE  # noqa: E402
-from topgrade_update.gui.dialog import (  # noqa: E402
+from uptray.core.topgrade_config import ONLY_STEP_FOR_SOURCE  # noqa: E402
+from uptray.gui.dialog import (  # noqa: E402
     HistoryDialog,
     MaintenanceDialog,
     UpdatesDialog,
@@ -52,7 +52,7 @@ def test_updates_dialog_double_click_opens_upstream_url(
     opened: list[str] = []
 
     monkeypatch.setattr(
-        "topgrade_update.gui.dialog.open_url", lambda url: opened.append(url)
+        "uptray.gui.dialog.open_url", lambda url: opened.append(url)
     )
     results = [
         CheckResult(source="aur", updates=[Update("paru-bin", "1", "2", "aur")]),
@@ -190,7 +190,7 @@ def test_updates_dialog_ctrl_f_focuses_filter(qapp) -> None:  # noqa: ANN001
     ],
 )
 def test_updates_title(total: int, error: str | None, expected: str) -> None:
-    from topgrade_update.core.models import CheckResult
-    from topgrade_update.gui.dialog import _updates_title
+    from uptray.core.models import CheckResult
+    from uptray.gui.dialog import _updates_title
 
     assert _updates_title(total, [CheckResult(source="pacman", error=error)]) == expected

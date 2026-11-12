@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
-from topgrade_update.core.checkers.builtins import FirmwareChecker, _parse_fwupd_output
+from uptray.core.checkers.builtins import FirmwareChecker, _parse_fwupd_output
 
 
 def test_parse_fwupd_output_empty() -> None:
@@ -96,7 +96,7 @@ def test_firmware_checker_check_parses_json_output() -> None:
     )
     checker = FirmwareChecker()
     with patch(
-        "topgrade_update.core.checkers.builtins.run_checked", return_value=completed
+        "uptray.core.checkers.builtins.run_checked", return_value=completed
     ) as mock_run:
         [update] = checker.check()
     mock_run.assert_called_once_with(["fwupdmgr", "get-updates", "--json"])

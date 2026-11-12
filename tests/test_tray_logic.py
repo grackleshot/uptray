@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from topgrade_update.gui.tray_logic import is_snoozed, snooze_label
+from uptray.gui.tray_logic import is_snoozed, snooze_label
 
 
 def test_is_snoozed_only_when_until_time_is_in_future() -> None:

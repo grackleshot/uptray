@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from topgrade_update.core.engine import UpdateEngine
-from topgrade_update.core.models import Config, Update
-from topgrade_update.core.provider import UpdateChecker
+from uptray.core.engine import UpdateEngine
+from uptray.core.models import Config, Update
+from uptray.core.provider import UpdateChecker
 
 
 class PacmanChecker(UpdateChecker):

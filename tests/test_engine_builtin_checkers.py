@@ -5,9 +5,9 @@ from __future__ import annotations
 import threading
 import time
 
-from topgrade_update.core.engine import UpdateEngine
-from topgrade_update.core.models import Update
-from topgrade_update.core.provider import UpdateChecker
+from uptray.core.engine import UpdateEngine
+from uptray.core.models import Update
+from uptray.core.provider import UpdateChecker
 
 
 def test_all_builtin_checkers_registered() -> None:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from topgrade_update.core.maintenance import (
+from uptray.core.maintenance import (
     CACHE_WARN_BYTES,
     cache_usage,
     find_orphans,
@@ -21,7 +21,7 @@ def _pacman_result(stdout: str, returncode: int = 0) -> subprocess.CompletedProc
 
 def test_find_orphans_parses_pacman_output(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
-        "topgrade_update.core.maintenance.shutil.which", lambda _name: "/usr/bin/pacman"
+        "uptray.core.maintenance.shutil.which", lambda _name: "/usr/bin/pacman"
     )
     orphans = find_orphans(runner=lambda _cmd, **_kw: _pacman_result("foo\nbar\n"))
 
@@ -30,13 +30,13 @@ def test_find_orphans_parses_pacman_output(monkeypatch) -> None:  # noqa: ANN001
 
 def test_find_orphans_exit_one_means_none(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
-        "topgrade_update.core.maintenance.shutil.which", lambda _name: "/usr/bin/pacman"
+        "uptray.core.maintenance.shutil.which", lambda _name: "/usr/bin/pacman"
     )
     assert find_orphans(runner=lambda _cmd, **_kw: _pacman_result("", returncode=1)) == []
 
 
 def test_find_orphans_without_pacman(monkeypatch) -> None:  # noqa: ANN001
-    monkeypatch.setattr("topgrade_update.core.maintenance.shutil.which", lambda _name: None)
+    monkeypatch.setattr("uptray.core.maintenance.shutil.which", lambda _name: None)
     assert find_orphans() == []
 
 

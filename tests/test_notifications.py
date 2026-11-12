@@ -8,7 +8,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from topgrade_update.core.notifications import NotificationClient
+from uptray.core.notifications import NotificationClient
 
 
 class FakeBus:
@@ -67,7 +67,7 @@ def test_notify_ignores_unknown_urgency() -> None:
 def test_notify_send_fallback_includes_urgency_flag(monkeypatch) -> None:  # noqa: ANN001
     client = NotificationClient()
     popen = Mock()
-    monkeypatch.setattr("topgrade_update.core.notifications.subprocess.Popen", popen)
+    monkeypatch.setattr("uptray.core.notifications.subprocess.Popen", popen)
 
     client.notify("Reboot required", "Please reboot", urgency="critical")
 

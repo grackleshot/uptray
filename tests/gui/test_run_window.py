@@ -8,8 +8,8 @@ import pytest
 
 pytest.importorskip("PySide6")
 
-from topgrade_update.core.models import Config  # noqa: E402
-from topgrade_update.gui.run_window import RunWindow  # noqa: E402
+from uptray.core.models import Config  # noqa: E402
+from uptray.gui.run_window import RunWindow  # noqa: E402
 
 
 def _fake_command(tmp_path: Path, *, fail: bool = False) -> list[str]:
@@ -77,7 +77,7 @@ def test_review_log_lists_current_transcript(
     assert window._log_path is not None
     assert window._log_path.is_file()
     assert window._log_path.parent == runs
-    from topgrade_update.gui.run_window import ReviewLogDialog
+    from uptray.gui.run_window import ReviewLogDialog
 
     dialog = ReviewLogDialog(current=window._log_path, runs_dir=runs)
     assert dialog._list.count() >= 1
@@ -90,7 +90,7 @@ def test_run_window_prompt_bar_announces_and_clears(
 ) -> None:
     """Detected [Y/n] prompts show the strip; cleared events hide it."""
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
-    from topgrade_update.core.topgrade_session import PromptCleared, PromptRequest
+    from uptray.core.topgrade_session import PromptCleared, PromptRequest
 
     window = RunWindow(
         Config(run_mode="simple"),
@@ -212,7 +212,7 @@ def test_askpass_is_announced_in_prompt_bar(
 ) -> None:
     from PySide6.QtWidgets import QInputDialog
 
-    from topgrade_update.core.topgrade_session import AskpassRequest
+    from uptray.core.topgrade_session import AskpassRequest
 
     window = RunWindow(
         Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"
@@ -305,7 +305,7 @@ def test_silent_step_gets_no_output_hint(qapp, qtbot, tmp_path) -> None:  # noqa
 
 
 def test_typed_prompt_answer_is_sent_to_terminal(qapp, tmp_path) -> None:  # noqa: ANN001
-    from topgrade_update.core.topgrade_session import PromptRequest
+    from uptray.core.topgrade_session import PromptRequest
 
     window = RunWindow(
         Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"
@@ -325,7 +325,7 @@ def test_typed_prompt_answer_is_sent_to_terminal(qapp, tmp_path) -> None:  # noq
 
 
 def test_prompt_brings_back_a_hidden_window(qapp, tmp_path) -> None:  # noqa: ANN001
-    from topgrade_update.core.topgrade_session import PromptRequest
+    from uptray.core.topgrade_session import PromptRequest
 
     window = RunWindow(
         Config(run_mode="simple"), command=_fake_command(tmp_path), runs_dir=tmp_path / "runs"

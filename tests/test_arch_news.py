@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from topgrade_update.core.arch_news import (
+from uptray.core.arch_news import (
     NewsItem,
     new_items,
     newest_marker,

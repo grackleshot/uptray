@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from topgrade_update.cli import main as cli
-from topgrade_update.cli.main import _print_json
-from topgrade_update.core.models import CheckResult, Config, CustomCommandConfig, Update
+from uptray.cli import main as cli
+from uptray.cli.main import _print_json
+from uptray.core.models import CheckResult, Config, CustomCommandConfig, Update
 
 
 def test_json_output_includes_flatpak_branch(capsys) -> None:
@@ -93,7 +93,7 @@ def test_cli_rejects_empty_terminal_name(monkeypatch) -> None:
 
 
 def test_version_flag(capsys) -> None:
-    from topgrade_update import __version__
+    from uptray import __version__
 
     with pytest.raises(SystemExit) as exc:
         cli.main(["--version"])

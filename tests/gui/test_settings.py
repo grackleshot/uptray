@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import topgrade_update.core.autostart as autostart
-from topgrade_update.core.models import (
+import uptray.core.autostart as autostart
+from uptray.core.models import (
     Config,
     CustomCommandConfig,
     NotificationConfig,
     SourceConfig,
     TrayConfig,
 )
-from topgrade_update.gui.settings import SettingsDialog
+from uptray.gui.settings import SettingsDialog
 
 
 def _sample_config() -> Config:
@@ -112,7 +112,7 @@ def test_quiet_hours_warning_visibility(qapp) -> None:  # noqa: ANN001
 def test_autostart_toggle_applies_on_accept(qapp, tmp_path, monkeypatch) -> None:  # noqa: ANN001
     dest = tmp_path / "autostart"
     monkeypatch.setattr(autostart, "AUTOSTART_DIR", dest)
-    monkeypatch.setattr(autostart, "AUTOSTART_FILE", dest / "topgrade-update-tray.desktop")
+    monkeypatch.setattr(autostart, "AUTOSTART_FILE", dest / "uptray.desktop")
     dialog = SettingsDialog(_sample_config())
     assert not dialog._autostart.isChecked()
 

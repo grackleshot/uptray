@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from topgrade_update.core.checkers.builtins import AurChecker
+from uptray.core.checkers.builtins import AurChecker
 
 
 def _run(stdout: str, returncode: int) -> subprocess.CompletedProcess[str]:
@@ -15,10 +15,10 @@ def _run(stdout: str, returncode: int) -> subprocess.CompletedProcess[str]:
 
 def test_exit_one_with_no_output_means_no_updates(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
-        "topgrade_update.core.checkers.builtins.shutil.which",
+        "uptray.core.checkers.builtins.shutil.which",
         lambda n: "/bin/paru" if n == "paru" else None,
     )
-    import topgrade_update.core.checkers.builtins as builtins
+    import uptray.core.checkers.builtins as builtins
 
     checker = AurChecker()
     monkeypatch.setattr(builtins, "run_checked", lambda _cmd: _run("", 1))
@@ -27,10 +27,10 @@ def test_exit_one_with_no_output_means_no_updates(monkeypatch) -> None:  # noqa:
 
 def test_parses_updates_on_success(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
-        "topgrade_update.core.checkers.builtins.shutil.which",
+        "uptray.core.checkers.builtins.shutil.which",
         lambda n: "/bin/paru" if n == "paru" else None,
     )
-    import topgrade_update.core.checkers.builtins as builtins
+    import uptray.core.checkers.builtins as builtins
 
     checker = AurChecker()
     monkeypatch.setattr(
@@ -46,10 +46,10 @@ def test_parses_updates_on_success(monkeypatch) -> None:  # noqa: ANN001
 
 def test_hard_failures_raise(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
-        "topgrade_update.core.checkers.builtins.shutil.which",
+        "uptray.core.checkers.builtins.shutil.which",
         lambda n: "/bin/paru" if n == "paru" else None,
     )
-    import topgrade_update.core.checkers.builtins as builtins
+    import uptray.core.checkers.builtins as builtins
 
     checker = AurChecker()
     monkeypatch.setattr(
@@ -66,7 +66,7 @@ def test_hard_failures_raise(monkeypatch) -> None:  # noqa: ANN001
 
 def test_pikaur_is_supported(monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setattr(
-        "topgrade_update.core.checkers.builtins.shutil.which",
+        "uptray.core.checkers.builtins.shutil.which",
         lambda n: "/bin/pikaur" if n == "pikaur" else None,
     )
 

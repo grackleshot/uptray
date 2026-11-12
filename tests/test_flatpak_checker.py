@@ -5,7 +5,7 @@ from __future__ import annotations
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
-from topgrade_update.core.checkers.builtins import FlatpakChecker
+from uptray.core.checkers.builtins import FlatpakChecker
 
 
 def test_flatpak_checker_keeps_version_and_branch() -> None:
@@ -24,7 +24,7 @@ def test_flatpak_checker_keeps_version_and_branch() -> None:
         stderr="",
     )
 
-    with patch("topgrade_update.core.checkers.builtins.run_checked", return_value=completed):
+    with patch("uptray.core.checkers.builtins.run_checked", return_value=completed):
         [update] = checker.check()
 
     assert update.name == "org.example.App"
@@ -39,7 +39,7 @@ def test_flatpak_checker_allows_missing_branch() -> None:
         args=["flatpak"], returncode=0, stdout="org.example.App\t2.0\n", stderr=""
     )
 
-    with patch("topgrade_update.core.checkers.builtins.run_checked", return_value=completed):
+    with patch("uptray.core.checkers.builtins.run_checked", return_value=completed):
         [update] = checker.check()
 
     assert update.branch is None

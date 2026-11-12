@@ -1,6 +1,11 @@
-# Topgrade Update
+# Uptray
 
-> A professional Linux desktop update notifier and system tray applet for Arch-based systems.
+> A system tray update notifier for Arch-based Linux, powered by
+> [topgrade](https://github.com/topgrade-rs/topgrade).
+
+Uptray is an independent project and is not affiliated with topgrade; it
+watches pacman, AUR, Flatpak and firmware for updates and runs your
+existing topgrade setup when you choose to update.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -31,8 +36,8 @@
 - **Colorblind-safe icon palette** (`tray.icon_style = "colorblind"`) plus a dedicated reboot-required icon
 - **Single instance**: a second tray launch exits instead of duplicating notifications
 - **Plugin architecture**: add custom checkers via entry points
-- **Configurable**: TOML config at `~/.config/topgrade-update/config.toml`
-- **CLI**: `topgrade-update --check`, `--list`, `--tray`, `--verbose`, `--json`, `--version`
+- **Configurable**: TOML config at `~/.config/uptray/config.toml`
+- **CLI**: `uptray --check`, `--list`, `--tray`, `--verbose`, `--json`, `--version`
 - **systemd timer option**: run headless checks at boot and every 6 hours without the tray
 
 ## Requirements
@@ -47,12 +52,16 @@ sudo pacman -S pacman-contrib
 
 ## Installation
 
+> **Coming from topgrade-update?** That was this app's old name. The
+> installer removes the old install, and on first launch Uptray moves your
+> settings, run history and autostart entry over to its new folders.
+
 ### On a CachyOS / Arch PC (recommended)
 
 One command (works in fish and bash):
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/grackleshot/topgrade-update/main/scripts/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/grackleshot/uptray/main/scripts/install.sh)"
 ```
 
 The installer:
@@ -67,32 +76,32 @@ The installer:
 If the repo isn't readable anonymously (a private copy), the installer signs in
 with the GitHub CLI and runs `gh auth setup-git` so git can fetch it; in that
 case download the script with
-`gh api -H "Accept: application/vnd.github.raw" repos/grackleshot/topgrade-update/contents/scripts/install.sh > /tmp/topgrade-update-install.sh`
-and run `bash /tmp/topgrade-update-install.sh`.
+`gh api -H "Accept: application/vnd.github.raw" repos/grackleshot/uptray/contents/scripts/install.sh > /tmp/uptray-install.sh`
+and run `bash /tmp/uptray-install.sh`.
 
 Pass `--no-autostart` to skip autostart. Re-running the script is safe. If your
-shell can't find `topgrade-update` afterwards, run `uv tool update-shell` once.
+shell can't find `uptray` afterwards, run `uv tool update-shell` once.
 
 Update to the latest `main`:
 
 ```bash
-uv tool upgrade topgrade-update
+uv tool upgrade uptray
 ```
 
 Uninstall:
 
 ```bash
-topgrade-update --tray --disable
-uv tool uninstall topgrade-update
-rm ~/.local/share/applications/topgrade-update-tray.desktop \
-   ~/.local/share/icons/hicolor/scalable/apps/topgrade-update.svg
+uptray --tray --disable
+uv tool uninstall uptray
+rm ~/.local/share/applications/uptray.desktop \
+   ~/.local/share/icons/hicolor/scalable/apps/uptray.svg
 ```
 
 ### From source
 
 ```bash
-git clone https://github.com/grackleshot/topgrade-update.git
-cd topgrade-update
+git clone https://github.com/grackleshot/uptray.git
+cd uptray
 pip install -e '.[gui]'
 ```
 
@@ -100,17 +109,17 @@ pip install -e '.[gui]'
 
 ```bash
 ./scripts/install-desktop-integration.sh
-topgrade-update --tray --enable   # autostart at login
+uptray --tray --enable   # autostart at login
 ```
 
 ### Headless checks with a systemd user timer
 
-Install a timer that runs `topgrade-update --check` at boot and every 6 hours
+Install a timer that runs `uptray --check` at boot and every 6 hours
 (useful when the tray is not running, e.g. on a minimal WM setup):
 
 ```bash
 ./scripts/install-desktop-integration.sh --systemd-timer
-systemctl --user list-timers topgrade-update.timer   # verify
+systemctl --user list-timers uptray.timer   # verify
 ```
 
 ## Usage
@@ -119,29 +128,29 @@ systemctl --user list-timers topgrade-update.timer   # verify
 
 ```bash
 # Check for updates and notify
-topgrade-update --check
+uptray --check
 
 # List available updates
-topgrade-update --list
+uptray --list
 
 # List as JSON (for scripts)
-topgrade-update --list --json
+uptray --list --json
 
 # Run topgrade in the current terminal
-topgrade-update
+uptray
 
 # Launch the system tray applet
-topgrade-update --tray
+uptray --tray
 
 # Enable/disable autostart
-topgrade-update --tray --enable
-topgrade-update --tray --disable
+uptray --tray --enable
+uptray --tray --disable
 
 # Verbose output
-topgrade-update --check --verbose
+uptray --check --verbose
 
 # Print the version
-topgrade-update --version
+uptray --version
 ```
 
 Exit codes:
@@ -163,7 +172,7 @@ Exit codes:
 
 ### Configuration
 
-Create `~/.config/topgrade-update/config.toml`:
+Create `~/.config/uptray/config.toml`:
 
 ```toml
 # Check interval in seconds (default: 3600; allowed range: 300–86400)
@@ -200,7 +209,7 @@ icon_style = "default"        # "default" or "colorblind"
 ```
 
 Snooze state and notification deduplication persist across restarts in
-`~/.local/state/topgrade-update/state.json`, so restarting the tray does not
+`~/.local/state/uptray/state.json`, so restarting the tray does not
 re-notify about updates you already saw.
 
 Configuration precedence is **CLI arguments → environment variables → TOML file → defaults**.
@@ -208,27 +217,27 @@ Overrides apply to `--check`, `--list`, and `--tray`:
 
 | Setting | Environment variable | CLI override |
 | --- | --- | --- |
-| Check interval | `TOPGRADE_UPDATE_CHECK_INTERVAL` | `--check-interval SECONDS` |
-| Terminal priority | `TOPGRADE_UPDATE_TERMINALS` (colon-separated) | Repeat `--terminal COMMAND` |
-| Checker enablement | `TOPGRADE_UPDATE_SOURCE_<NAME>_ENABLED` | `--enable-source NAME` / `--disable-source NAME` |
-| Notifications | `TOPGRADE_UPDATE_NOTIFICATIONS_ENABLED` | `--enable-notifications` / `--disable-notifications` |
-| Quiet hours | `TOPGRADE_UPDATE_QUIET_HOURS_START`, `TOPGRADE_UPDATE_QUIET_HOURS_END` | `--quiet-hours-start HOUR`, `--quiet-hours-end HOUR`, or `--no-quiet-hours` |
-| Notification sound | `TOPGRADE_UPDATE_NOTIFICATIONS_SOUND` | `--sound` / `--no-sound` |
-| Tray click action | `TOPGRADE_UPDATE_TRAY_CLICK_ACTION` | `--tray-click-action ACTION` |
-| Snooze duration | `TOPGRADE_UPDATE_TRAY_SNOOZE_HOURS` | `--snooze-hours HOURS` |
-| Icon style | `TOPGRADE_UPDATE_TRAY_ICON_STYLE` | `--icon-style default\|colorblind` |
+| Check interval | `UPTRAY_CHECK_INTERVAL` | `--check-interval SECONDS` |
+| Terminal priority | `UPTRAY_TERMINALS` (colon-separated) | Repeat `--terminal COMMAND` |
+| Checker enablement | `UPTRAY_SOURCE_<NAME>_ENABLED` | `--enable-source NAME` / `--disable-source NAME` |
+| Notifications | `UPTRAY_NOTIFICATIONS_ENABLED` | `--enable-notifications` / `--disable-notifications` |
+| Quiet hours | `UPTRAY_QUIET_HOURS_START`, `UPTRAY_QUIET_HOURS_END` | `--quiet-hours-start HOUR`, `--quiet-hours-end HOUR`, or `--no-quiet-hours` |
+| Notification sound | `UPTRAY_NOTIFICATIONS_SOUND` | `--sound` / `--no-sound` |
+| Tray click action | `UPTRAY_TRAY_CLICK_ACTION` | `--tray-click-action ACTION` |
+| Snooze duration | `UPTRAY_TRAY_SNOOZE_HOURS` | `--snooze-hours HOURS` |
+| Icon style | `UPTRAY_TRAY_ICON_STYLE` | `--icon-style default\|colorblind` |
 
 Boolean environment values accept `true`/`false`, `yes`/`no`, `on`/`off`, or `1`/`0`.
 For checker names, use uppercase letters and preserve underscores; for example,
-`TOPGRADE_UPDATE_SOURCE_CUSTOM_MY_CHECK_ENABLED` controls the `custom_my_check` checker.
+`UPTRAY_SOURCE_CUSTOM_MY_CHECK_ENABLED` controls the `custom_my_check` checker.
 
 ### Plugin architecture
 
 Create a Python package with a custom checker:
 
 ```python
-from topgrade_update.core.provider import UpdateChecker
-from topgrade_update.core.models import Update
+from uptray.core.provider import UpdateChecker
+from uptray.core.models import Update
 
 class MyChecker(UpdateChecker):
     name = "my-checker"
@@ -245,7 +254,7 @@ class MyChecker(UpdateChecker):
 Register via `pyproject.toml`:
 
 ```toml
-[project.entry-points."topgrade_update.plugins"]
+[project.entry-points."uptray.plugins"]
 my-checker = "mypackage.plugins:MyChecker"
 ```
 
@@ -262,8 +271,8 @@ enabled = true
 ## Architecture
 
 ```
-topgrade-update/
-├── src/topgrade_update/
+uptray/
+├── src/uptray/
 │   ├── cli/
 │   │   └── main.py          # CLI entry point & argument parsing
 │   ├── core/
@@ -321,7 +330,7 @@ ruff check src/ tests/ && mypy src/ && pytest tests/
 - No telemetry. Network traffic comes from the update tools themselves
   (`checkupdates`, your AUR helper, `flatpak`, `fwupdmgr`, `topgrade`) plus the
   Arch news feed (`https://archlinux.org/feeds/news/`).
-- Run transcripts are kept in `~/.local/share/topgrade-update/runs/`. They can
+- Run transcripts are kept in `~/.local/share/uptray/runs/`. They can
   contain package names and your hostname; sudo passwords are never written.
 - **Diagnose** (offered after a failed run) starts an AI coding agent you have
   installed (`claude`, `codex` or `pi`) and points it at the failed run's

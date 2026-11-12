@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from topgrade_update.gui.tray_logic import _acquire_instance_lock
+from uptray.gui.tray_logic import _acquire_instance_lock
 
 
 def test_lock_is_exclusive(tmp_path, monkeypatch) -> None:  # noqa: ANN001
@@ -27,6 +27,6 @@ def test_lock_file_records_pid(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     handle = _acquire_instance_lock()
     assert handle is not None
 
-    lock_file = tmp_path / "topgrade-update.lock"
+    lock_file = tmp_path / "uptray.lock"
     assert lock_file.read_text(encoding="utf-8").strip() == str(os.getpid())
     handle.close()
