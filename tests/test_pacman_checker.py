@@ -44,3 +44,25 @@ def test_parse_tab_separated() -> None:
     assert result is not None
     assert result.name == "pkg"
     assert result.new_version == "2.0-1"
+
+
+def test_missing_checkupdates_raises_install_hint(monkeypatch) -> None:  # noqa: ANN001
+    import pytest
+
+    from topgrade_update.core.checkers.builtins import PacmanChecker
+    from topgrade_update.core.engine import UpdateEngine
+
+    monkeypatch.setattr(
+        "topgrade_update.core.checkers.builtins.shutil.which",
+        lambda name: "/usr/bin/pacman" if name == "pacman" else None,
+    )
+    checker = PacmanChecker()
+    assert checker.is_available() is True
+    with pytest.raises(RuntimeError, match="pacman-contrib"):
+        checker.check()
+
+    engine = UpdateEngine()
+    engine.register(checker)
+    [result] = engine.check_all()
+    assert result.error is not None
+    assert "pacman-contrib" in result.error

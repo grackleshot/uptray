@@ -180,3 +180,13 @@ def test_jeepney_notification_address_uses_correct_object_path() -> None:
     assert client._proxy.object_path == "/org/freedesktop/Notifications"
     assert client._proxy.bus_name == "org.freedesktop.Notifications"
     assert client._proxy.interface == "org.freedesktop.Notifications"
+
+
+def test_second_notify_replaces_the_first() -> None:
+    client, _bus, calls = _make_dbus_client()
+
+    client.notify("One", "a")
+    client.notify("Two", "b")
+
+    assert calls[0][3][1] == 0
+    assert calls[1][3][1] == 731

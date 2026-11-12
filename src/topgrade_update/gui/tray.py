@@ -31,7 +31,12 @@ from topgrade_update.core.maintenance import maintenance_summary
 from topgrade_update.core.models import CheckResult, Config
 from topgrade_update.core.network import is_online
 from topgrade_update.core.notification_engine import DeferredNotification, NotificationEngine
-from topgrade_update.core.notifications import NotificationClient, send_message, send_notification
+from topgrade_update.core.notifications import (
+    NotificationClient,
+    format_source_counts,
+    send_message,
+    send_notification,
+)
 from topgrade_update.core.quiet_hours import is_quiet_hours
 from topgrade_update.core.state import (
     AppState,
@@ -364,14 +369,13 @@ class Tray(QSystemTrayIcon):
 
     def _package_total(self) -> int:
         """Total updates excluding the reboot source (a state, not a package)."""
-        counts = self._updates_by_source()
-        return sum(counts.values()) - counts.get("reboot", 0)
+        return total_updates(self._results)
 
     # ------------------------------------------------------------------
     # Check lifecycle
 
-    def _start_check(self) -> None:
-        if self._is_snoozed():
+    def _start_check(self, *, force: bool = False) -> None:
+        if self._is_snoozed() and not force:
             if self._snooze_until is not None:
                 self._action_status.setText(snooze_label(self._snooze_until))
             self._update_tooltip()
@@ -397,7 +401,7 @@ class Tray(QSystemTrayIcon):
         self._results = results
         self._last_check = datetime.now()
         counts = {result.source: len(result.updates) for result in results}
-        package_total = sum(counts.values()) - counts.get("reboot", 0)
+        package_total = total_updates(results)
         snoozed = self._is_snoozed()
         # Always advance dedup state so restarts/disabled periods don't re-notify.
         changed = self._notification_engine.should_notify(results)
@@ -448,7 +452,9 @@ class Tray(QSystemTrayIcon):
             self.setIcon(self._icon_cache.updates(total))
         elif reboot_pending:
             self.setIcon(self._icon_cache.reboot())
-        elif not results or any(result.error is not None for result in results):
+        elif any(result.error is not None for result in results):
+            self.setIcon(self._icon_cache.error())
+        elif not results:
             self.setIcon(self._icon_cache.idle())
         else:
             self.setIcon(self._icon_cache.uptodate())
@@ -459,9 +465,10 @@ class Tray(QSystemTrayIcon):
     def _handle_reboot_notification(
         self, reboot_pending: bool, *, snoozed: bool, quiet: bool
     ) -> None:
-        if (
-            reboot_pending
-            and not self._state.reboot_notified
+        if not reboot_pending:
+            self._state.reboot_notified = False
+        elif (
+            not self._state.reboot_notified
             and self._cfg.notifications.enabled
             and not snoozed
             and not quiet
@@ -472,8 +479,7 @@ class Tray(QSystemTrayIcon):
                 urgency="critical",
                 sound=self._cfg.notifications.sound,
             )
-        if reboot_pending != self._state.reboot_notified:
-            self._state.reboot_notified = reboot_pending
+            self._state.reboot_notified = True
 
     def _maybe_maintenance_reminder(
         self,
@@ -547,6 +553,9 @@ class Tray(QSystemTrayIcon):
             lines.append("System is up to date")
         if reboot_pending:
             lines.append("Reboot required")
+        counts = format_source_counts(self._results)
+        if counts:
+            lines.append(counts)
         if self._news_new_count:
             lines.append(f"{self._news_new_count} new Arch news item(s)")
         self.setToolTip("\n".join(lines))
@@ -556,16 +565,10 @@ class Tray(QSystemTrayIcon):
         total = total_updates(latest_results)
         if total == 0:
             return
-        source_counts = {
-            result.source: len(result.updates)
-            for result in latest_results
-            if result.updates
-        }
-        body = "\n".join(f"  {source}: {count}" for source, count in source_counts.items())
         self._send_update_notification(
             latest_results,
             summary="Updates available after quiet hours",
-            body=f"{total} update(s) currently available\n{body}",
+            body=f"{total} update(s) currently available\n{format_source_counts(latest_results)}",
         )
 
     def _send_update_notification(
@@ -665,8 +668,7 @@ class Tray(QSystemTrayIcon):
         self._db_debounce.start()  # restarting the timer debounces bursts
 
     def _on_pacman_db_changed(self) -> None:
-        if not self._is_snoozed():
-            self._start_check()
+        self._start_check(force=True)
 
     def _on_resume_detected(self) -> None:
         """Re-check shortly after the system resumes from suspend."""
@@ -676,14 +678,11 @@ class Tray(QSystemTrayIcon):
     # Windows and actions
 
     def _show_updates(self) -> None:
-        if not self._results or total_updates(self._results) == 0:
+        has_errors = any(result.error is not None for result in self._results)
+        reboot_pending = is_reboot_pending(self._updates_by_source())
+        if not (total_updates(self._results) or has_errors or reboot_pending):
             if not self._results:
                 send_message("No update checkers", "No supported update source is available.")
-            elif any(result.error is not None for result in self._results):
-                send_message(
-                    "Update check failed",
-                    "One or more update sources could not be checked.",
-                )
             else:
                 send_message("No updates", "Your system is up to date.")
             return
@@ -772,7 +771,7 @@ class Tray(QSystemTrayIcon):
             self._cfg,
             extra_args=extra_args,
             title=title,
-            on_finished=lambda _code: QTimer.singleShot(500, self._start_check),
+            on_finished=lambda _code: QTimer.singleShot(500, lambda: self._start_check(force=True)),
         )
         self._run_window = window
         window.show()
@@ -803,10 +802,8 @@ class Tray(QSystemTrayIcon):
                 self._show_updates()
             elif self._cfg.tray.click_action == "run_topgrade":
                 self._run_topgrade()
-            elif total_updates(self._results) > 0:
-                self._show_updates()
             else:
-                self._run_topgrade()
+                self._show_updates()
 
 
 def run_tray(cfg: Config | None = None) -> int:

@@ -44,9 +44,11 @@ class PacmanChecker(UpdateChecker):
     label: ClassVar[str] = "Pacman"
 
     def is_available(self) -> bool:
-        return shutil.which("checkupdates") is not None
+        return shutil.which("pacman") is not None
 
     def check(self) -> list[Update]:
+        if shutil.which("checkupdates") is None:
+            raise RuntimeError("checkupdates not found — install pacman-contrib")
         command = ["checkupdates"]
         r = run_checked(command)
         if r.returncode == 2:  # checkupdates uses 2 to mean no updates

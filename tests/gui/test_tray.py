@@ -260,7 +260,7 @@ def test_pacman_db_change_triggers_debounced_check(
     from PySide6.QtCore import QEventLoop, QTimer
 
     checks: list[int] = []
-    monkeypatch.setattr(tray, "_start_check", lambda: checks.append(1))
+    monkeypatch.setattr(tray, "_start_check", lambda **_kw: checks.append(1))
 
     # Simulate the directoryChanged signal firing in bursts.
     tray._on_db_changed_signal("/var/lib/pacman/local")
@@ -373,3 +373,86 @@ def test_quit_stops_running_window_before_quitting(
     tray._quit()
 
     assert calls == ["window", "quit"]
+
+
+def _patch_check_thread(tray: Tray, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    started: list[int] = []
+
+    class FakeThread:
+        def __init__(self, *_a: object) -> None:
+            self.result = type("S", (), {"connect": lambda *_a: None})()
+
+        def isRunning(self) -> bool:  # noqa: N802
+            return False
+
+        def start(self) -> None:
+            started.append(1)
+
+    monkeypatch.setattr("topgrade_update.gui.tray.CheckThread", FakeThread)
+    monkeypatch.setattr("topgrade_update.gui.tray.is_online", lambda: True)
+    return started
+
+
+def test_forced_check_runs_while_snoozed(tray: Tray, monkeypatch: pytest.MonkeyPatch) -> None:
+    started = _patch_check_thread(tray, monkeypatch)
+    tray._snooze(1)
+
+    tray._start_check()
+    assert started == []
+    tray._start_check(force=True)
+    assert started == [1]
+
+
+def test_reboot_flag_stays_false_while_snoozed(
+    tray: Tray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sent: list[str] = []
+    monkeypatch.setattr("topgrade_update.gui.tray.send_message", lambda s, *a, **k: sent.append(s))
+    monkeypatch.setattr("topgrade_update.gui.tray.maintenance_summary", lambda: [])
+    tray._snooze(1)
+    reboot = CheckResult(
+        source="reboot", updates=[Update("kernel", "", "reboot required", "reboot")]
+    )
+
+    tray._on_check_done([reboot])
+
+    assert sent == []
+    assert tray._state.reboot_notified is False
+
+
+def test_default_left_click_shows_updates(
+    tray: Tray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from PySide6.QtWidgets import QSystemTrayIcon
+
+    tray._cfg.tray.click_action = "default"
+    shown: list[int] = []
+    monkeypatch.setattr(tray, "_show_updates", lambda: shown.append(1))
+
+    tray._on_activated(QSystemTrayIcon.ActivationReason.Trigger)
+
+    assert shown == [1]
+
+
+def test_show_updates_opens_dialog_on_errors(
+    tray: Tray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    opened: list[object] = []
+
+    class FakeDialog:
+        def __init__(self, results: object) -> None:
+            opened.append(results)
+
+        def set_on_run(self, _cb: object) -> None: ...
+
+        def set_on_preview(self, _cb: object) -> None: ...
+
+        def exec(self) -> int:
+            return 0
+
+    monkeypatch.setattr("topgrade_update.gui.tray.UpdatesDialog", FakeDialog)
+    tray._results = [CheckResult(source="pacman", error="boom")]
+
+    tray._show_updates()
+
+    assert len(opened) == 1

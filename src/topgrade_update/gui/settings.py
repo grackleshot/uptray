@@ -29,7 +29,7 @@ from topgrade_update.gui.style import apply_theme, colors, set_primary
 if TYPE_CHECKING:
     from collections.abc import Mapping
 
-CLICK_ACTIONS = {"default": "Default (updates dialog or topgrade)",
+CLICK_ACTIONS = {"default": "Default (show updates)",
                  "show_updates": "Show updates dialog",
                  "run_topgrade": "Run topgrade"}
 ICON_STYLES = {"default": "Default", "colorblind": "Colorblind-safe"}

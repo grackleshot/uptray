@@ -144,6 +144,7 @@ def cmd_check(cfg: Config, verbose: bool = False) -> int:
         else:
             send_notification(results, sound=cfg.notifications.sound)
         print(f"{total} update(s) available.")
+        _print_reboot_required(results)
         return 2 if has_errors else 1
     if has_errors:
         print("Update check incomplete; see errors above.", file=sys.stderr)
@@ -152,7 +153,14 @@ def cmd_check(cfg: Config, verbose: bool = False) -> int:
         print("No update checkers are available.", file=sys.stderr)
         return 2
     print("System is up to date.")
+    _print_reboot_required(results)
     return 0
+
+
+def _print_reboot_required(results: list[CheckResult]) -> None:
+    """Report a pending reboot separately from package updates."""
+    if any(r.source == "reboot" and r.updates for r in results):
+        print("Reboot required.")
 
 
 def cmd_list(cfg: Config, *, json_output: bool = False) -> int:
@@ -173,14 +181,16 @@ def cmd_list(cfg: Config, *, json_output: bool = False) -> int:
             return 2
         else:
             print("No updates available.")
+        _print_reboot_required(results)
         return 2 if has_errors else 0
     for r in results:
-        if r.updates:
+        if r.updates and r.source != "reboot":
             print(f"\n{r.source} ({len(r.updates)}):")
             for up in r.updates:
                 branch = f" ({up.branch})" if up.branch else ""
                 print(f"  {up.name}{branch} {up.old_version} -> {up.new_version}")
     print(f"\nTotal: {total} update(s)")
+    _print_reboot_required(results)
     return 2 if has_errors else 0
 
 

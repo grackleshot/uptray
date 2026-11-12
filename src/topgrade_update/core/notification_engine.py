@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, TypedDict
 
+from topgrade_update.core.checkers.facade import total_updates
+
 if TYPE_CHECKING:
     from topgrade_update.core.models import CheckResult
 
@@ -50,7 +52,7 @@ class NotificationEngine:
         - notify when total update count increases (N -> M where M > N)
         - do not notify on no updates, same count, or decreases
         """
-        total = _total_updates(results)
+        total = total_updates(results)
         prev = self._state.prev_total
         self._state.prev_total = total
         return total > 0 and (prev == 0 or total > prev)
@@ -80,16 +82,16 @@ class NotificationEngine:
         self._state.deferred_notifications.append(
             {
                 "results": results,
-                "total": _total_updates(results),
+                "total": total_updates(results),
                 "sources": _source_counts(results),
             }
         )
         return True
 
 
-def _total_updates(results: list[CheckResult]) -> int:
-    return sum(len(result.updates) for result in results)
-
-
 def _source_counts(results: list[CheckResult]) -> dict[str, int]:
-    return {result.source: len(result.updates) for result in results if result.updates}
+    return {
+        result.source: len(result.updates)
+        for result in results
+        if result.updates and result.source != "reboot"
+    }

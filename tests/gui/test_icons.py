@@ -25,3 +25,11 @@ def test_reboot_icon_is_cached_and_distinct(qapp) -> None:  # noqa: ANN001
     assert first is second  # cached
     assert not first.isNull()
     assert updates.cacheKey() != first.cacheKey()
+
+
+def test_error_icon_is_distinct_in_both_styles(qapp) -> None:  # noqa: ANN001
+    for style in ("default", "colorblind"):
+        cache = IconCache(style)
+        err = cache.error().pixmap(64, 64).toImage().cacheKey()
+        assert err != cache.idle().pixmap(64, 64).toImage().cacheKey()
+        assert err != cache.uptodate().pixmap(64, 64).toImage().cacheKey()

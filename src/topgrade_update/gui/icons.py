@@ -38,6 +38,7 @@ _PALETTES: dict[str, dict[str, str]] = {
         "updates": "#42a5f5",
         "badge": "#e53935",
         "reboot": "#7e57c2",
+        "error": "#e53935",
     },
     "colorblind": {
         "idle": "#999999",
@@ -46,6 +47,7 @@ _PALETTES: dict[str, dict[str, str]] = {
         "updates": "#0072b2",
         "badge": "#e69f00",
         "reboot": "#cc79a7",
+        "error": "#d55e00",
     },
 }
 
@@ -56,6 +58,7 @@ _TRAY_KINDS: dict[str, tuple[str, str]] = {
     "uptodate": ("uptodate", "check"),
     "updates": ("updates", "arrow"),
     "reboot": ("reboot", "reboot"),
+    "error": ("error", "cross"),
 }
 
 # In-window status kinds -> (theme token, glyph).
@@ -99,6 +102,10 @@ class IconCache:
     def reboot(self) -> QIcon:
         """Return the reboot-required icon (restart arrows glyph)."""
         return self._tray_icon("reboot")
+
+    def error(self) -> QIcon:
+        """Return the check-failed icon (cross glyph)."""
+        return self._tray_icon("error")
 
     def updates(self, count: int) -> QIcon:
         """Return an updates-available icon with a badge count."""

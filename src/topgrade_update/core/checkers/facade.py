@@ -61,8 +61,8 @@ def check_all(cfg: Config | None = None) -> list[CheckResult]:
 
 
 def total_updates(results: list[CheckResult]) -> int:
-    """Return the total number of available updates across all results."""
-    return sum(len(r.updates) for r in results)
+    """Return the number of available package updates (a pending reboot is not one)."""
+    return sum(len(r.updates) for r in results if r.source != "reboot")
 
 
 def find_terminal(cfg: Config | None = None) -> tuple[str | None, list[str]]:

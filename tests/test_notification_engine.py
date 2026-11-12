@@ -83,3 +83,16 @@ def test_is_quiet_hours_is_disabled_when_unset_or_equal() -> None:
     assert is_quiet_hours(None, 8, datetime(2026, 5, 20, 2)) is False
     assert is_quiet_hours(23, None, datetime(2026, 5, 20, 2)) is False
     assert is_quiet_hours(8, 8, datetime(2026, 5, 20, 8)) is False
+
+
+def test_reboot_is_not_counted_as_an_update() -> None:
+    from topgrade_update.core.checkers import total_updates
+
+    results = [_result("pacman", 1), _result("reboot", 1)]
+    engine = NotificationEngine()
+
+    assert total_updates(results) == 1
+    assert engine.should_notify([_result("reboot", 1)]) is False
+    engine.enter_quiet_hours()
+    engine.maybe_defer(results)
+    assert engine.exit_quiet_hours()[0]["sources"] == {"pacman": 1}

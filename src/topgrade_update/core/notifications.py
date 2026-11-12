@@ -8,6 +8,7 @@ from collections.abc import Callable
 from threading import Event, Lock, Thread
 from typing import TYPE_CHECKING, Any
 
+from topgrade_update.core.checkers.facade import total_updates
 from topgrade_update.core.logging import get_logger
 
 if TYPE_CHECKING:
@@ -34,6 +35,7 @@ class NotificationClient:
         self._action_stop = Event()
         self._action_listener_thread: Thread | None = None
         self._action_listener_available = False
+        self._last_id = 0  # replaces_id so each notification replaces the previous one
         try:
             from jeepney import DBusAddress, MatchRule, new_method_call
             from jeepney.bus_messages import message_bus
@@ -204,7 +206,7 @@ class NotificationClient:
             "susssasa{sv}i",
             (
                 APP_NAME,
-                0,  # replaces_id
+                self._last_id,
                 ICON_NAME,
                 summary,
                 body,
@@ -216,7 +218,10 @@ class NotificationClient:
         try:
             reply = self._bus.send_and_get_reply(msg, timeout=5)
             reply_body = getattr(reply, "body", ())
-            return reply_body[0] if reply_body else None
+            if reply_body:
+                self._last_id = int(reply_body[0])
+                return self._last_id
+            return None
         except Exception:
             self._notify_send(summary, body, urgency, sound)
             return None
@@ -283,11 +288,11 @@ class NotificationClient:
                 bus.close()
 
 
-def _format_body(results: list[CheckResult]) -> str:
-    """Format check results into a notification body."""
+def format_source_counts(results: list[CheckResult]) -> str:
+    """Format per-source package update counts (reboot excluded), one per line."""
     parts: list[str] = []
     for r in results:
-        if r.updates:
+        if r.updates and r.source != "reboot":
             parts.append(f"  {r.source}: {len(r.updates)}")
     return "\n".join(parts)
 
@@ -318,12 +323,12 @@ def send_notification(
     Returns:
         Notification ID if DBus was used, None otherwise.
     """
-    total = sum(len(r.updates) for r in results)
+    total = total_updates(results)
     if total == 0:
         return None
 
     notification_summary = summary or f"{total} update(s) available"
-    notification_body = body or _format_body(results)
+    notification_body = body or format_source_counts(results)
 
     notification_client = client or NotificationClient()
     return notification_client.notify(

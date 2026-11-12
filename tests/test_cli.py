@@ -118,3 +118,17 @@ def test_tray_config_error_sends_notification(monkeypatch, capsys) -> None:
     sent.clear()
     assert cli.main(["--check"]) == 2
     assert sent == []
+
+
+def test_cmd_check_reboot_only_exits_zero_and_reports_reboot(monkeypatch, capsys) -> None:
+    reboot = CheckResult(
+        source="reboot", updates=[Update("kernel", "", "reboot required", "reboot")]
+    )
+    monkeypatch.setattr(cli, "check_all", lambda _cfg: [reboot])
+
+    code = cli.cmd_check(Config())
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Reboot required." in out
+    assert "System is up to date." in out
