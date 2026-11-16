@@ -418,6 +418,7 @@ class TopgradeSession:
         self._askpass_next_id = 1
         self._askpass_replies: dict[int, queue.Queue[str | None]] = {}
         self._started = False
+        self._size = (24, 80)
 
     @property
     def log_path(self) -> Path:
@@ -467,6 +468,9 @@ class TopgradeSession:
         if pid == 0:  # child
             child_env = env
             try:
+                import fcntl
+
+                fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", *self._size, 0, 0))
                 if self._cwd is not None:
                     os.chdir(self._cwd)
                 os.execvpe(self._command[0], self._command, child_env)
@@ -497,9 +501,10 @@ class TopgradeSession:
 
     def resize(self, rows: int, cols: int) -> None:
         """Update the PTY window size."""
+        self._size = (max(1, rows), max(1, cols))
         if self._master_fd is None:
             return
-        winsize = struct.pack("HHHH", max(1, rows), max(1, cols), 0, 0)
+        winsize = struct.pack("HHHH", *self._size, 0, 0)
         with contextlib.suppress(OSError):
             fcntl_ioctl = termios.TIOCSWINSZ
             import fcntl

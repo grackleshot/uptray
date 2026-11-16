@@ -37,3 +37,21 @@ def test_fallback_backspace_emits_delete(
     )
     assert widget.eventFilter(widget._fallback, enter) is True
     assert captured[-1] == "\r"
+
+
+def test_fallback_redraw_and_resize(qapp, qtbot, monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setattr(terminal_mod, "_WEBENGINE_AVAILABLE", False)
+    widget = TerminalWidget()
+    qtbot.addWidget(widget)
+    sizes: list[tuple[int, int]] = []
+    widget.set_resize_handler(lambda rows, cols: sizes.append((rows, cols)))
+    widget.resize(800, 400)
+    widget.show()
+    qtbot.waitUntil(lambda: bool(sizes))
+    wide = sizes[-1][1]
+    widget.write("checking 10%\r\x1b[")
+    widget.write("Kchecking 50%\r\nnext")
+    assert widget._fallback.toPlainText() == "checking 50%\nnext"
+    widget.resize(400, 400)
+    qtbot.waitUntil(lambda: sizes[-1][1] < wide)
+    assert widget._fallback.lineWrapMode() == widget._fallback.LineWrapMode.NoWrap

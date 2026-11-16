@@ -347,3 +347,21 @@ def test_window_closed_before_start_never_launches(qapp, qtbot, tmp_path) -> Non
     qtbot.wait(50)
 
     assert window._session is None
+
+
+def test_operation_progress_resets_between_steps(qapp, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    from uptray.core.topgrade_session import SessionFinished, StepEvent
+
+    window = RunWindow(Config(), command=_fake_command(tmp_path))
+    updates: list[float | None] = []
+    monkeypatch.setattr(window._task_progress, "update", updates.append)
+    window._apply_step(StepEvent("System update", "running", latest_line="integrity 43%"))
+    assert window._progress.maximum() == 100
+    assert window._progress.value() == 43
+    assert updates[-1] == 0.43
+    window._apply_step(StepEvent("Flatpak", "running", latest_line="Starting…"))
+    assert window._progress.maximum() == 0
+    assert updates[-1] is None
+    window._finish(SessionFinished(returncode=0, log_path=tmp_path / "run.log"))
+    assert updates[-1] is None
+    window.close()

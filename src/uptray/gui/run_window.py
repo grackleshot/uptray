@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import re
 import shutil
 import time
 from pathlib import Path
@@ -63,6 +64,7 @@ from uptray.gui.style import (
     set_danger,
     set_primary,
 )
+from uptray.gui.task_progress import TaskProgress
 from uptray.gui.terminal_widget import TerminalWidget
 
 if TYPE_CHECKING:
@@ -152,9 +154,12 @@ class RunWindow(QMainWindow):
         self._state_kind: str | None = None
         self._quitting = False
         self._background_notice_sent = False
+        self._task_progress = TaskProgress()
+        self._terminal_size = (24, 80)
 
         self.setWindowTitle(title or "Uptray — Run")
-        self.setMinimumSize(840, 560)
+        self.setMinimumSize(640, 480)
+        self.resize(1000, 700)
         self.session_event.connect(self._on_session_event)
 
         tokens = colors()
@@ -179,6 +184,7 @@ class RunWindow(QMainWindow):
         state_font.setPointSizeF(state_font.pointSizeF() + 4)
         state_font.setBold(True)
         self._state_label.setFont(state_font)
+        self._state_label.setWordWrap(True)
         self._subtitle_label = QLabel(
             f'<span style="color:{tokens["muted"]}">Starting topgrade…</span>'
         )
@@ -223,7 +229,10 @@ class RunWindow(QMainWindow):
             "Simple (Ctrl+1): friendly progress anyone can follow.\n"
             "Verbose (Ctrl+2): full terminal output with every detail."
         )
+        layout.addLayout(header)
+        header = QHBoxLayout()
         header.addWidget(mode_frame)
+        header.addStretch()
 
         self._btn_review = QPushButton("Review log")
         self._btn_review.clicked.connect(self._review_log)
@@ -246,13 +255,16 @@ class RunWindow(QMainWindow):
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)  # busy pulse until steps are known
         self._progress.setTextVisible(False)
+        self._progress.setToolTip(
+            "Progress of the current operation, when reported; overall run total is unknown."
+        )
         self._progress.setFixedHeight(8)
         layout.addWidget(self._progress)
 
         # --- Body: step checklist + Simple/Verbose stack -----------------
         self._body = body = QSplitter(Qt.Orientation.Horizontal)
         self._step_list = QListWidget()
-        self._step_list.setMinimumWidth(230)
+        self._step_list.setMinimumWidth(140)
         self._step_list.setIconSize(QSize(18, 18))
         body.addWidget(self._step_list)
 
@@ -266,8 +278,9 @@ class RunWindow(QMainWindow):
         self._term.set_resize_handler(self._on_term_resize)
         self._stack.addWidget(self._term)
         body.addWidget(self._stack)
+        body.setCollapsible(1, False)
         body.setStretchFactor(1, 1)
-        body.setSizes([260, 580])
+        body.setSizes([180, 780])
         layout.addWidget(body, 1)
 
         # --- Retry prompt strip ------------------------------------------
@@ -370,6 +383,7 @@ class RunWindow(QMainWindow):
         self._timer.start(1000)
         self._spin_timer.start(120)
         try:
+            self._session.resize(*self._terminal_size)
             self._session.start()
         except OSError as exc:
             self._spin_timer.stop()
@@ -468,10 +482,21 @@ class RunWindow(QMainWindow):
         self._set_state("running", "Updating your computer…", " · ".join(parts))
 
     def _refresh_progress(self) -> None:
-        """The bar stays a busy pulse while the run is underway (totals unknown)."""
+        """Show current-operation percentages; pulse when progress is unknown."""
         if self._returncode is not None:
             return
-        self._progress.setRange(0, 0)
+        step = self._steps.get(self._current_step or "")
+        match = (
+            re.search(r"(?<![\d.])(100|[1-9]?\d)(?:\.\d+)?\s*%", step.latest_line)
+            if step else None
+        )
+        fraction = int(match.group(1)) / 100 if match else None
+        if fraction is None:
+            self._progress.setRange(0, 0)
+        else:
+            self._progress.setRange(0, 100)
+            self._progress.setValue(round(fraction * 100))
+        self._task_progress.update(fraction)
 
     # ------------------------------------------------------------------
     # Session events
@@ -604,6 +629,7 @@ class RunWindow(QMainWindow):
             self._session.write(data)
 
     def _on_term_resize(self, rows: int, cols: int) -> None:
+        self._terminal_size = (rows, cols)
         if self._session is not None:
             self._session.resize(rows, cols)
 
@@ -634,6 +660,7 @@ class RunWindow(QMainWindow):
         self._timer.stop()
         self._spin_timer.stop()
         self._returncode = event.returncode
+        self._task_progress.update(None)
         self._log_path = event.log_path
         self._failed_step = event.failed_step or self._failed_step
         self._retry_bar.hide()
@@ -742,6 +769,7 @@ class RunWindow(QMainWindow):
     def shutdown(self) -> None:
         """Stop any running session and close for real (used on app quit)."""
         self._quitting = True
+        self._task_progress.update(None)
         self.close()
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802

@@ -367,3 +367,18 @@ def test_sudo_helpers_never_use_a_predictable_tmp_dir(monkeypatch: pytest.Monkey
         assert base.stat().st_uid == os.getuid()
     finally:
         topgrade_session._private_dir.cache_clear()
+
+
+def test_initial_pty_size_reaches_child(tmp_path: Path) -> None:
+    events: list[object] = []
+    session = TopgradeSession(
+        ["/bin/sh", "-c", "stty size"], runs_dir=tmp_path,
+        on_event=events.append, enable_askpass=False,
+    )
+    session.resize(31, 67)
+    session.start()
+    session.wait(timeout=5)
+    assert session.returncode == 0
+    output = "".join(e.text for e in events if isinstance(e, OutputChunk))
+    assert "31 67" in output
+    session.close()
