@@ -365,3 +365,22 @@ def test_operation_progress_resets_between_steps(qapp, tmp_path, monkeypatch) ->
     window._finish(SessionFinished(returncode=0, log_path=tmp_path / "run.log"))
     assert updates[-1] is None
     window.close()
+
+
+def test_carriage_return_stream_updates_both_progress_indicators(
+    qapp, tmp_path, monkeypatch  # noqa: ANN001
+) -> None:
+    from uptray.core.topgrade_session import _ParserState, parse_topgrade_chunk
+
+    window = RunWindow(Config(), command=_fake_command(tmp_path))
+    updates: list[float | None] = []
+    monkeypatch.setattr(window._task_progress, "update", updates.append)
+    state = _ParserState()
+    for event in parse_topgrade_chunk(state, "── System update ──\n"):
+        window._on_session_event(event)
+    for percent in (10, 50, 100):
+        for event in parse_topgrade_chunk(state, f"\rchecking integrity {percent}%"):
+            window._on_session_event(event)
+        assert window._progress.value() == percent
+        assert updates[-1] == percent / 100
+    window.close()
