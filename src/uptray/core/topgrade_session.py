@@ -242,7 +242,9 @@ def parse_topgrade_chunk(state: _ParserState, chunk: str) -> list[SessionEvent]:
     """Feed decoded text into *state* and return newly recognized events."""
     events: list[SessionEvent] = []
     # One split, not a slice per line: whole transcripts are parsed for history.
-    *lines, state.buffer = (state.buffer + chunk).split("\n")
+    # CR redraws are complete display updates too. CRLF (even when split
+    # across reads) must not concatenate successive percentages into one line.
+    *lines, state.buffer = re.split(r"\r\n?|\n", state.buffer + chunk)
     for line in lines:
         events.extend(_parse_line(state, line))
 
@@ -263,6 +265,19 @@ def parse_topgrade_chunk(state: _ParserState, chunk: str) -> list[SessionEvent]:
             # New output after the prompt: it was answered (PTY echo) or superseded.
             state.last_prompt = None
             events.append(PromptCleared())
+        # Some commands prefix redraws with CR and leave the new percentage
+        # unterminated. Publish a complete percentage without consuming the
+        # partial line: later chunks may still contain its suffix or a prompt.
+        if (
+            state.current_step is not None
+            and question is None
+            and stripped != state.last_line
+            and re.search(r"\d+(?:\.\d+)?\s*%", stripped)
+        ):
+            state.last_line = stripped
+            events.append(StepEvent(
+                name=state.current_step, status="running", latest_line=stripped,
+            ))
     return events
 
 
@@ -418,6 +433,7 @@ class TopgradeSession:
         self._askpass_next_id = 1
         self._askpass_replies: dict[int, queue.Queue[str | None]] = {}
         self._started = False
+        self._size = (24, 80)
 
     @property
     def log_path(self) -> Path:
@@ -467,6 +483,9 @@ class TopgradeSession:
         if pid == 0:  # child
             child_env = env
             try:
+                import fcntl
+
+                fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", *self._size, 0, 0))
                 if self._cwd is not None:
                     os.chdir(self._cwd)
                 os.execvpe(self._command[0], self._command, child_env)
@@ -497,9 +516,10 @@ class TopgradeSession:
 
     def resize(self, rows: int, cols: int) -> None:
         """Update the PTY window size."""
+        self._size = (max(1, rows), max(1, cols))
         if self._master_fd is None:
             return
-        winsize = struct.pack("HHHH", max(1, rows), max(1, cols), 0, 0)
+        winsize = struct.pack("HHHH", *self._size, 0, 0)
         with contextlib.suppress(OSError):
             fcntl_ioctl = termios.TIOCSWINSZ
             import fcntl

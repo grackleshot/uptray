@@ -28,6 +28,8 @@ existing topgrade setup when you choose to update.
 - **Update history**: the History window has a System log tab (recent upgrade sessions parsed from `/var/log/pacman.log`) and a Runs tab (past runs started from the app)
 - **Dry-run preview**: launches `topgrade --dry-run` from the tray or dialog; when the preview succeeds, a **Run for real** button starts the actual update
 - **In-app run window**: Simple and Verbose views, step checklist, and a prompt bar that surfaces questions from the running command, including answers you type (pacdiff menus, pacman "Enter a number")
+- **KDE task manager progress**: when the current update operation reports a percentage, the run window and the `uptray.desktop` task icon show it live. The overlay clears between operations with unknown progress and when the run ends; it is not an overall topgrade completion estimate. Plasma must have task progress indicators enabled.
+- **Resizable verbose output**: the terminal reports its actual size to update commands; the plain-text fallback keeps long lines horizontally scrollable and handles in-place progress redraws. The step sidebar can be narrowed or collapsed to give output more room.
 - **Keeps running when closed**: closing the run window mid-update hides it instead of stopping the update; choose Run Topgrade in the tray to bring it back, and Cancel asks before stopping
 - **Update only this source**: right-click a source in the Updates dialog to run topgrade for just that step
 - **Topgrade integration**: respects your `topgrade.toml` (including `misc.disable`, `misc.only`, and `topgrade.d/` drop-ins), launches in your preferred terminal

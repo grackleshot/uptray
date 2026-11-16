@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from importlib import resources
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QKeyEvent, QResizeEvent, QTextCursor
+from PySide6.QtGui import QKeyEvent, QResizeEvent, QShowEvent, QTextCursor
 from PySide6.QtWidgets import QPlainTextEdit, QVBoxLayout, QWidget
 
 if TYPE_CHECKING:
@@ -56,14 +57,18 @@ class TerminalWidget(QWidget):
         self._bridge: _Bridge | None = None
         self._term_ready = not self._use_web
         self._pending: list[str] = []
+        self._escape = ""
         self._fallback = QPlainTextEdit()
         # Read-only display; keystrokes go to the PTY (including Backspace).
         self._fallback.setReadOnly(True)
+        self._fallback.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self._fallback.document().setMaximumBlockCount(10000)
         self._fallback.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._fallback.setStyleSheet(
             "QPlainTextEdit { background: #1e1e1e; color: #ddd; font-family: monospace; }"
         )
         self._fallback.installEventFilter(self)
+        self._output_cursor = QTextCursor(self._fallback.document())
 
         if self._use_web:
             self._view = QWebEngineView(self)
@@ -88,6 +93,7 @@ class TerminalWidget(QWidget):
     def set_resize_handler(self, callback: Callable[[int, int], None] | None) -> None:
         """Register a callback invoked with (rows, cols) after fit."""
         self._on_resize = callback
+        QTimer.singleShot(0, self._fit)
 
     def write(self, text: str) -> None:
         """Append PTY output, buffering until the WebEngine terminal is ready."""
@@ -106,20 +112,54 @@ class TerminalWidget(QWidget):
                 )
             return
         self._fallback.clear()
+        self._output_cursor = QTextCursor(self._fallback.document())
+        self._escape = ""
 
     def _write_now(self, text: str) -> None:
         if self._view is not None:
-            escaped = (
-                text.replace("\\", "\\\\")
-                .replace("`", "\\`")
-                .replace("${", "\\${")
-            )
             self._view.page().runJavaScript(
-                f"window.termApi && window.termApi.write(`{escaped}`)"
+                f"window.termApi && window.termApi.write({json.dumps(text)})"
             )
             return
-        self._fallback.moveCursor(QTextCursor.MoveOperation.End)
-        self._fallback.insertPlainText(text)
+        # A small line-oriented fallback, not a full ANSI terminal. Preserve CR
+        # redraws and erase-line sequences even when split across output chunks.
+        bar = self._fallback.verticalScrollBar()
+        follow = bar.value() == bar.maximum()
+        position = bar.value()
+        cursor = self._output_cursor
+        for char in text:
+            if self._escape:
+                self._escape += char
+                if self._escape == "\x1b[":
+                    continue
+                if len(self._escape) > 2 and "@" <= char <= "~":
+                    if char == "K":
+                        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock,
+                                            QTextCursor.MoveMode.KeepAnchor)
+                        cursor.removeSelectedText()
+                    self._escape = ""
+                elif len(self._escape) == 2 and char != "[":
+                    self._escape = ""
+                continue
+            if char == "\x1b":
+                self._escape = char
+            elif char == "\r":
+                cursor.movePosition(QTextCursor.MoveOperation.StartOfBlock)
+            elif char == "\n":
+                cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+                cursor.insertBlock()
+            elif char == "\b":
+                cursor.movePosition(QTextCursor.MoveOperation.PreviousCharacter)
+            elif char >= " " or char == "\t":
+                if not cursor.atBlockEnd():
+                    cursor.movePosition(QTextCursor.MoveOperation.NextCharacter,
+                                        QTextCursor.MoveMode.KeepAnchor)
+                cursor.insertText(char)
+        self._fallback.setTextCursor(cursor)
+        if follow:
+            bar.setValue(bar.maximum())
+        else:
+            bar.setValue(position)
 
     def focus_terminal(self) -> None:
         """Focus the terminal for keyboard input."""
@@ -152,6 +192,15 @@ class TerminalWidget(QWidget):
 
     def _fit(self) -> None:
         if self._view is None:
+            metrics = self._fallback.fontMetrics()
+            viewport = self._fallback.viewport()
+            if self._on_resize is not None:
+                self._on_resize(
+                    max(1, viewport.height() // metrics.lineSpacing()),
+                    max(1, viewport.width() // max(1, metrics.horizontalAdvance("M"))),
+                )
+            return
+        if not self._term_ready:
             return
         self._view.page().runJavaScript(
             "window.termApi && (window.termApi.fit(), "
@@ -168,8 +217,11 @@ class TerminalWidget(QWidget):
 
     def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802
         super().resizeEvent(event)
-        if self._view is not None:
-            QTimer.singleShot(50, self._fit)
+        QTimer.singleShot(50, self._fit)
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802
+        super().showEvent(event)
+        QTimer.singleShot(0, self._fit)
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802
         if watched is self._fallback and event.type() == QEvent.Type.KeyPress:

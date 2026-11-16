@@ -367,3 +367,49 @@ def test_sudo_helpers_never_use_a_predictable_tmp_dir(monkeypatch: pytest.Monkey
         assert base.stat().st_uid == os.getuid()
     finally:
         topgrade_session._private_dir.cache_clear()
+
+
+def test_initial_pty_size_reaches_child(tmp_path: Path) -> None:
+    events: list[object] = []
+    session = TopgradeSession(
+        ["/bin/sh", "-c", "stty size"], runs_dir=tmp_path,
+        on_event=events.append, enable_askpass=False,
+    )
+    session.resize(31, 67)
+    session.start()
+    session.wait(timeout=5)
+    assert session.returncode == 0
+    output = "".join(e.text for e in events if isinstance(e, OutputChunk))
+    assert "31 67" in output
+    session.close()
+
+
+@pytest.mark.parametrize("ending", ["\r", "\r\n", "\n"])
+def test_progress_redraws_emit_live_steps(ending: str) -> None:
+    state = _ParserState()
+    parse_topgrade_chunk(state, "── System update ──\n")
+    for percent in (10, 50, 100):
+        events = parse_topgrade_chunk(state, f"checking {percent}%{ending}")
+        steps = [e for e in events if isinstance(e, StepEvent)]
+        assert steps[-1].latest_line == f"checking {percent}%"
+        assert steps[-1].name == "System update"
+
+
+def test_progress_redraws_in_one_chunk_do_not_concatenate() -> None:
+    state = _ParserState()
+    parse_topgrade_chunk(state, "── System update ──\n")
+    events = parse_topgrade_chunk(state, "checking 10%\rchecking 50%\rchecking 100%\r\n")
+    steps = [e for e in events if isinstance(e, StepEvent)]
+    assert [e.latest_line for e in steps] == ["checking 10%", "checking 50%", "checking 100%"]
+
+
+def test_progress_prefixed_with_cr_can_end_mid_chunk() -> None:
+    state = _ParserState()
+    parse_topgrade_chunk(state, "── System update ──\n")
+    assert not parse_topgrade_chunk(state, "\rchecking 5")
+    events = parse_topgrade_chunk(state, "0%")
+    steps = [e for e in events if isinstance(e, StepEvent)]
+    assert steps[-1].latest_line == "checking 50%"
+    events = parse_topgrade_chunk(state, "\r\nnext phase\n")
+    steps = [e for e in events if isinstance(e, StepEvent)]
+    assert steps[-1].latest_line == "next phase"
