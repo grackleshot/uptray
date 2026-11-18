@@ -39,12 +39,32 @@ def _parse_bounded_int(value: str, *, minimum: int, maximum: int, label: str) ->
     return parsed
 
 
+_BUILTIN_SOURCES = frozenset({"pacman", "aur", "flatpak", "firmware", "reboot"})
+
+
 def _parse_source_name(value: str) -> str:
     """Normalize a checker name passed to a source enable/disable option."""
     source = value.strip().lower()
     if not source:
         raise argparse.ArgumentTypeError("source name cannot be empty")
     return source
+
+
+def _known_sources(cfg: Config) -> set[str]:
+    """Checker names the CLI will accept for --enable-source / --disable-source."""
+    names = set(_BUILTIN_SOURCES)
+    names.update(cfg.sources)
+    names.update(custom_checker_name(command.name) for command in cfg.custom_commands)
+    return names
+
+
+def _package_checkers_ran(results: list[CheckResult]) -> bool:
+    """Return True when a package-update checker produced a result.
+
+    The reboot checker is always available and is not a package source, so a
+    reboot-only result list means no package checker ran.
+    """
+    return any(result.source != "reboot" for result in results)
 
 
 def _parse_terminal(value: str) -> str:
@@ -71,6 +91,9 @@ def _apply_cli_overrides(
     conflicts = enabled_sources & disabled_sources
     if conflicts:
         parser.error(f"cannot both enable and disable source(s): {', '.join(sorted(conflicts))}")
+    unknown = sorted((enabled_sources | disabled_sources) - _known_sources(cfg))
+    if unknown:
+        parser.error(f"unknown source(s): {', '.join(unknown)}")
     for source in enabled_sources:
         cfg.sources.setdefault(source, SourceConfig()).enabled = True
     for source in disabled_sources:
@@ -146,11 +169,12 @@ def cmd_check(cfg: Config, verbose: bool = False) -> int:
         print(f"{total} update(s) available.")
         _print_reboot_required(results)
         return 2 if has_errors else 1
+    if not _package_checkers_ran(results):
+        print("No update checkers are available.", file=sys.stderr)
+        _print_reboot_required(results)
+        return 2
     if has_errors:
         print("Update check incomplete; see errors above.", file=sys.stderr)
-        return 2
-    if not results:
-        print("No update checkers are available.", file=sys.stderr)
         return 2
     print("System is up to date.")
     _print_reboot_required(results)
@@ -171,14 +195,15 @@ def cmd_list(cfg: Config, *, json_output: bool = False) -> int:
 
     if json_output:
         _print_json(results, total)
-        return 2 if has_errors or not results else 0
+        return 2 if has_errors or not _package_checkers_ran(results) else 0
 
     if total == 0:
+        if not _package_checkers_ran(results):
+            print("No update checkers are available.")
+            _print_reboot_required(results)
+            return 2
         if has_errors:
             print("No updates found by successful checks.")
-        elif not results:
-            print("No update checkers are available.")
-            return 2
         else:
             print("No updates available.")
         _print_reboot_required(results)
@@ -352,14 +377,22 @@ def main(argv: list[str] | None = None) -> int:
         "--icon-style", choices=("default", "colorblind"),
         help="Override the tray icon palette",
     )
-    parser.add_argument(
-        "--sound", dest="notification_sound", action="store_true", default=None,
+    sound_group = parser.add_mutually_exclusive_group()
+    sound_group.add_argument(
+        "--sound",
+        dest="notification_sound",
+        action="store_const",
+        const=True,
         help="Play the notification server's default sound",
     )
-    parser.add_argument(
-        "--no-sound", dest="notification_sound", action="store_false",
-        help="Disable notification sound (default)",
+    sound_group.add_argument(
+        "--no-sound",
+        dest="notification_sound",
+        action="store_const",
+        const=False,
+        help="Disable notification sound",
     )
+    parser.set_defaults(notification_sound=None)
     args = parser.parse_args(argv)
 
     if sum((args.check, args.list, args.tray)) > 1:

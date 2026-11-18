@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 from uptray.core.engine import UpdateEngine
 from uptray.core.logging import get_logger
 from uptray.core.topgrade_config import (
-    find_topgrade_toml,
     get_disabled_categories,
     get_disabled_steps,
     get_only_steps,
@@ -31,15 +30,13 @@ def _get_engine() -> UpdateEngine:
 
 
 def _get_topgrade_disabled_checkers() -> set[str]:
-    """Return checker names disabled by topgrade.toml."""
-    path = find_topgrade_toml()
-    if path is None:
-        return set()
-
+    """Return checker names disabled by topgrade.toml and topgrade.d/."""
     try:
-        topgrade_cfg = load_topgrade_config(path)
+        # No explicit path: drop-ins merge first, then the main file, including
+        # when only topgrade.d/ exists.
+        topgrade_cfg = load_topgrade_config()
     except (OSError, ValueError) as exc:
-        get_logger("checkers").warning("Could not read Topgrade config %s: %s", path, exc)
+        get_logger("checkers").warning("Could not read Topgrade config: %s", exc)
         return set()
     disabled_topgrade_names = get_disabled_steps(topgrade_cfg) | get_disabled_categories(
         topgrade_cfg
