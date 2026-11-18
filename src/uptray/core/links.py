@@ -16,6 +16,28 @@ _PACKAGE_SEARCH_URL = "https://archlinux.org/packages/?q={name}"
 _AUR_PACKAGE_URL = "https://aur.archlinux.org/packages/{name}/"
 _FLATHUB_APP_URL = "https://flathub.org/apps/{name}"
 _FWUPD_URL = "https://fwupd.org/"
+# Flatpak runtimes use these components (org.freedesktop.Platform.GL.default, …).
+# Flathub's /apps/ page 404s for them, so they get no link.
+_FLATPAK_RUNTIME_PARTS = frozenset(
+    {
+        "Platform",
+        "Sdk",
+        "Extension",
+        "Locale",
+        "GL",
+        "GL32",
+        "GLES",
+        "Plugin",
+        "Debug",
+        "Docs",
+        "Var",
+    }
+)
+
+
+def is_flatpak_runtime(name: str) -> bool:
+    """Return True when a Flatpak id is a runtime rather than an app."""
+    return any(part in _FLATPAK_RUNTIME_PARTS for part in name.split("."))
 
 
 def upstream_url(name: str, source: str, runner: Runner | None = None) -> str:
@@ -23,6 +45,8 @@ def upstream_url(name: str, source: str, runner: Runner | None = None) -> str:
     if source == "aur":
         return _AUR_PACKAGE_URL.format(name=name)
     if source == "flatpak":
+        if is_flatpak_runtime(name):
+            return ""
         return _FLATHUB_APP_URL.format(name=name)
     if source == "firmware":
         return _FWUPD_URL

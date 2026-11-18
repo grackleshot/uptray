@@ -488,11 +488,9 @@ class HistoryDialog(QDialog):
 
         self._list = QListWidget()
         for index, session in enumerate(self._sessions):
-            counts = session.counts()
             label = (
                 f"{session.started.strftime('%Y-%m-%d %H:%M')} — "
-                f"{counts['upgraded']} upgraded, {counts['installed']} installed, "
-                f"{counts['removed']} removed"
+                f"{_session_summary(session.counts())}"
             )
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, index)
@@ -535,7 +533,9 @@ class HistoryDialog(QDialog):
         )
         action_colors = {
             "upgraded": tokens["accent"],
+            "downgraded": tokens.get("warning", tokens["text"]),
             "installed": tokens["success"],
+            "reinstalled": tokens["text"],
             "removed": tokens["danger"],
         }
         lines = [
@@ -545,17 +545,31 @@ class HistoryDialog(QDialog):
         ]
         for change in session.changes:
             color = action_colors.get(change.action, tokens["text"])
-            if change.action == "upgraded":
+            if change.action in {"upgraded", "downgraded"}:
                 text = (
-                    f"upgraded {change.name} "
+                    f"{change.action} {change.name} "
                     f"({change.old_version} → {change.new_version})"
                 )
-            elif change.action == "installed":
-                text = f"installed {change.name} ({change.new_version})"
-            else:
+            elif change.action == "removed":
                 text = f"removed {change.name} ({change.old_version})"
+            else:
+                text = f"{change.action} {change.name} ({change.new_version})"
             lines.append(f'<span style="color:{color}">{text}</span>')
         self._detail.setHtml("<br>".join(lines))
+
+
+def _session_summary(counts: dict[str, int]) -> str:
+    """One-line action counts, keeping the historical three and adding the rest."""
+    parts = [
+        f"{counts.get('upgraded', 0)} upgraded",
+        f"{counts.get('installed', 0)} installed",
+        f"{counts.get('removed', 0)} removed",
+    ]
+    if counts.get("downgraded"):
+        parts.append(f"{counts['downgraded']} downgraded")
+    if counts.get("reinstalled"):
+        parts.append(f"{counts['reinstalled']} reinstalled")
+    return ", ".join(parts)
 
 
 class MaintenanceDialog(QDialog):
