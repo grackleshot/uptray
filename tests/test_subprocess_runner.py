@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from uptray.core.subprocess import run_checked
+from uptray.core.subprocess import _DEFAULT_TIMEOUT, run_checked
+
+
+def test_default_timeout_allows_a_slow_mirror() -> None:
+    assert _DEFAULT_TIMEOUT >= 120
 
 
 def test_run_checked_echo_returns_zero_and_captures_stdout() -> None:

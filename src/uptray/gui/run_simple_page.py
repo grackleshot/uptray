@@ -1,66 +1,45 @@
-"""Simple-view page of the run window (big status hero + recovery row)."""
+"""Readable recent activity for the Simple run monitor."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFontDatabase
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtGui import QTextOption
+from PySide6.QtWidgets import QFrame, QLabel, QPlainTextEdit, QVBoxLayout
 
-from uptray.gui.icons import ICON_XL, status_pixmap
-from uptray.gui.style import set_primary
+from uptray.gui.style import tag_card
 
 if TYPE_CHECKING:
     from uptray.gui.run_window import RunWindow
 
 
-def build_simple_page(win: RunWindow, tokens: dict[str, str]) -> QWidget:
-    """Build the Simple page, attaching its widgets to ``win`` as before."""
-    simple_page = QWidget()
-    simple_layout = QVBoxLayout(simple_page)
-    simple_layout.setContentsMargins(24, 32, 24, 24)
-    simple_layout.setSpacing(10)
-    simple_layout.addStretch(2)
-    win._big_icon = QLabel()
-    win._big_icon.setPixmap(status_pixmap("running", ICON_XL))
-    win._big_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    simple_layout.addWidget(win._big_icon)
-    win._big_title = QLabel("Updating your computer…")
-    big_font = win._big_title.font()
-    big_font.setPointSizeF(big_font.pointSizeF() + 7)
-    big_font.setBold(True)
-    win._big_title.setFont(big_font)
-    win._big_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    simple_layout.addWidget(win._big_title)
-    win._big_subtitle = QLabel(
-        f'<span style="color:{tokens["muted"]}">'
-        "This may take a few minutes. You can keep working."
-        "</span>"
-    )
-    win._big_subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    simple_layout.addWidget(win._big_subtitle)
-    simple_layout.addSpacing(8)
-    win._activity_label = QLabel("")
-    win._activity_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    mono = QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont).family()
-    win._activity_label.setStyleSheet(
-        f"color: {tokens['muted']};"
-        f" font-family: '{mono}';"
-    )
-    simple_layout.addWidget(win._activity_label)
+def build_simple_page(win: RunWindow, tokens: dict[str, str]) -> QFrame:
+    """Build a compact log preview with wrapping and a stable viewport."""
+    page = QFrame()
+    tag_card(page)
+    layout = QVBoxLayout(page)
+    layout.setContentsMargins(16, 12, 16, 10)
+    layout.setSpacing(4)
 
-    # Recovery row: error states must always offer a way forward.
-    win._hero_actions = QWidget()
-    hero_row = QHBoxLayout(win._hero_actions)
-    hero_row.setSpacing(8)
-    hero_row.addStretch()
-    win._btn_try_again = QPushButton("Try again")
-    set_primary(win._btn_try_again)
-    win._btn_try_again.clicked.connect(win._try_again)
-    hero_row.addWidget(win._btn_try_again)
-    hero_row.addStretch()
-    win._hero_actions.hide()
-    simple_layout.addWidget(win._hero_actions)
-    simple_layout.addStretch(3)
-    return simple_page
+    heading = QLabel("Recent activity")
+    heading_font = heading.font()
+    heading_font.setPointSizeF(heading_font.pointSizeF() + 1)
+    heading_font.setBold(True)
+    heading.setFont(heading_font)
+    layout.addWidget(heading)
+
+    win._activity = QPlainTextEdit()
+    win._activity.setReadOnly(True)
+    win._activity.setAccessibleName("Recent activity")
+    win._activity.setPlaceholderText("Activity will appear as Topgrade reports it.")
+    win._activity.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+    win._activity.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    win._activity.setWordWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+    win._activity.setStyleSheet(
+        f"background: transparent; color: {tokens['text']}; border: none; padding: 0;"
+    )
+    win._activity.setMinimumHeight(58)
+    layout.addWidget(win._activity, 1)
+
+    return page

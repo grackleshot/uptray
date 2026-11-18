@@ -206,6 +206,7 @@ class SettingsDialog(QDialog):
         buttons.addButton(ok_button, QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        # A bound method, not a lambda: Qt would hold a lambda capturing self, and so the dialog.
         buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
             self._restore_defaults
         )
@@ -214,6 +215,11 @@ class SettingsDialog(QDialog):
         available = self.screen().availableGeometry().height()
         wanted = content.sizeHint().height() + buttons.sizeHint().height() + 60
         self.resize(max(540, content.sizeHint().width() + 48), min(wanted, int(available * 0.9)))
+
+    def _restore_defaults(self) -> None:
+        """Reset the form, including autostart, which is off by default."""
+        self._populate(Config())
+        self._autostart.setChecked(False)
 
     def _populate(self, cfg: Config) -> None:
         """Fill every widget from cfg (also used by Restore Defaults)."""
@@ -234,11 +240,6 @@ class SettingsDialog(QDialog):
         _select(self._quiet_start, cfg.notifications.quiet_hours_start)
         _select(self._quiet_end, cfg.notifications.quiet_hours_end)
         self._update_quiet_warning()
-
-    def _restore_defaults(self) -> None:
-        """Reset the form, including autostart, which is off by default."""
-        self._populate(Config())
-        self._autostart.setChecked(False)
 
     def _update_quiet_warning(self) -> None:
         """Show the warning when quiet hours would silently do nothing."""
