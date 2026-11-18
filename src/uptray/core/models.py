@@ -49,7 +49,7 @@ class NotificationConfig:
 
     enabled: bool = True
     quiet_hours_start: int | None = None  # 0-23, inclusive
-    quiet_hours_end: int | None = None  # 0-23, inclusive
+    quiet_hours_end: int | None = None  # 0-23, exclusive (quiet until this hour)
     sound: bool = False  # request the server's default notification sound
 
 

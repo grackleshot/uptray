@@ -171,7 +171,11 @@ class SettingsDialog(QDialog):
         quiet_row.addStretch()
         tray_form.addRow("Quiet hours", quiet_row)
         tray_form.addRow(
-            "", _caption("During quiet hours, checks still run but nothing pops up.")
+            "",
+            _caption(
+                "During quiet hours, checks still run but nothing pops up. "
+                "The end hour is not included: 23 to 7 stays quiet until 07:00."
+            ),
         )
         self._quiet_warning = QLabel(
             "Quiet hours need different start and end times, or both set to (off)."

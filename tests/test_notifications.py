@@ -66,14 +66,15 @@ def test_notify_ignores_unknown_urgency() -> None:
 
 def test_notify_send_fallback_includes_urgency_flag(monkeypatch) -> None:  # noqa: ANN001
     client = NotificationClient()
-    popen = Mock()
-    monkeypatch.setattr("uptray.core.notifications.subprocess.Popen", popen)
+    run = Mock()
+    monkeypatch.setattr("uptray.core.notifications.subprocess.run", run)
 
     client.notify("Reboot required", "Please reboot", urgency="critical")
 
-    command = popen.call_args.args[0]
+    command = run.call_args.args[0]
     assert "-u" in command
     assert command[command.index("-u") + 1] == "critical"
+    assert run.call_args.kwargs["timeout"] == 5
 
 
 def test_notify_falls_back_without_action_support(monkeypatch) -> None:
@@ -107,7 +108,7 @@ def test_action_listener_dispatches_action_invoked_signal() -> None:
             yield []
 
         def recv_until_filtered(self, _matches: list[object], **_kwargs: object):
-            return SimpleNamespace(body=(19, "snooze"))
+            return SimpleNamespace(member="ActionInvoked", body=(19, "snooze"))
 
         def close(self) -> None:
             pass
@@ -120,12 +121,45 @@ def test_action_listener_dispatches_action_invoked_signal() -> None:
     client._MatchRule = lambda **_kwargs: "action-rule"
     client._message_bus = SimpleNamespace(AddMatch=lambda rule: ("AddMatch", rule))
     client._action_handler = handle_action
+    client._note_notification(19)
 
     client._listen_for_actions()
 
     assert signal_bus.added_rule == ("AddMatch", "action-rule")
     assert client._action_listener_available is True
     assert received == ["snooze"]
+    assert not client._owns_notification(19)
+
+
+def test_action_listener_ignores_other_apps() -> None:
+    client = NotificationClient()
+    received: list[str] = []
+
+    class ForeignBus:
+        def send_and_get_reply(self, message: object, **_kwargs: object) -> None:
+            return None
+
+        @contextmanager
+        def filter(self, rule: object):
+            yield []
+
+        def recv_until_filtered(self, _matches: list[object], **_kwargs: object):
+            client._action_stop.set()
+            return SimpleNamespace(member="ActionInvoked", body=(404, "snooze"))
+
+        def close(self) -> None:
+            pass
+
+    client._open_dbus_connection = ForeignBus
+    client._MatchRule = lambda **_kwargs: "action-rule"
+    client._message_bus = SimpleNamespace(AddMatch=lambda rule: ("AddMatch", rule))
+    client._action_handler = received.append
+    client._note_notification(19)
+
+    client._listen_for_actions()
+
+    assert received == []
+    assert client._owns_notification(19)
 
 
 def test_jeepney_builds_action_and_subscription_messages() -> None:
@@ -180,6 +214,79 @@ def test_jeepney_notification_address_uses_correct_object_path() -> None:
     assert client._proxy.object_path == "/org/freedesktop/Notifications"
     assert client._proxy.bus_name == "org.freedesktop.Notifications"
     assert client._proxy.interface == "org.freedesktop.Notifications"
+
+
+def test_activation_token_does_not_swallow_the_action() -> None:
+    client = NotificationClient()
+    received: list[str] = []
+    pending = [
+        SimpleNamespace(member="ActivationToken", body=(19, "kde-activation-token-xyz")),
+        SimpleNamespace(member="ActionInvoked", body=(19, "snooze")),
+    ]
+
+    class TokenBus:
+        def send_and_get_reply(self, message: object, **_kwargs: object) -> None:
+            return None
+
+        @contextmanager
+        def filter(self, rule: object):
+            yield []
+
+        def recv_until_filtered(self, _matches: list[object], **_kwargs: object):
+            if not pending:
+                client._action_stop.set()
+                raise TimeoutError
+            return pending.pop(0)
+
+        def close(self) -> None:
+            pass
+
+    client._open_dbus_connection = TokenBus
+    client._MatchRule = lambda **_kwargs: "action-rule"
+    client._message_bus = SimpleNamespace(AddMatch=lambda rule: ("AddMatch", rule))
+    client._action_handler = received.append
+    client._note_notification(19)
+
+    client._listen_for_actions()
+
+    assert received == ["snooze"]
+    assert not client._owns_notification(19)
+
+
+def test_real_dbus_signals_are_routed_by_their_header_member() -> None:
+    """Real jeepney messages carry the member in header.fields, not as an attribute."""
+    from jeepney import DBusAddress, new_signal
+    from jeepney.low_level import Message
+
+    address = DBusAddress(
+        "/org/freedesktop/Notifications", interface="org.freedesktop.Notifications"
+    )
+
+    def received_signal(member: str, body: tuple[object, ...]) -> Message:
+        sent = new_signal(address, member, "us", body)
+        return Message.from_buffer(sent.serialise(serial=1))
+
+    client = NotificationClient()
+    received: list[str] = []
+    client._action_handler = received.append
+    client._note_notification(19)
+
+    client._handle_notification_signal(received_signal("ActivationToken", (19, "token")))
+    client._handle_notification_signal(received_signal("ActionInvoked", (19, "snooze")))
+
+    assert received == ["snooze"]
+
+
+def test_plain_message_does_not_replace_the_update_notification() -> None:
+    client, _bus, calls = _make_dbus_client()
+
+    client.notify("Updates", "2 available")
+    client.notify("Reboot required", "Please reboot", replace=False)
+    client.notify("Updates", "still available")
+
+    assert calls[0][3][1] == 0
+    assert calls[1][3][1] == 0
+    assert calls[2][3][1] == 731
 
 
 def test_second_notify_replaces_the_first() -> None:

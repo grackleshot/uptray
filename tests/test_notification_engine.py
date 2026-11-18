@@ -70,12 +70,16 @@ def test_deferred_notification_records_total_and_sources() -> None:
 
 
 def test_is_quiet_hours_supports_normal_windows() -> None:
+    assert is_quiet_hours(9, 17, datetime(2026, 5, 20, 9)) is True
     assert is_quiet_hours(9, 17, datetime(2026, 5, 20, 12)) is True
+    assert is_quiet_hours(9, 17, datetime(2026, 5, 20, 17)) is False
     assert is_quiet_hours(9, 17, datetime(2026, 5, 20, 20)) is False
 
 
 def test_is_quiet_hours_supports_wraparound_windows() -> None:
+    assert is_quiet_hours(23, 8, datetime(2026, 5, 20, 23)) is True
     assert is_quiet_hours(23, 8, datetime(2026, 5, 20, 2)) is True
+    assert is_quiet_hours(23, 8, datetime(2026, 5, 20, 8)) is False
     assert is_quiet_hours(23, 8, datetime(2026, 5, 20, 12)) is False
 
 

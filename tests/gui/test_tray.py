@@ -241,17 +241,89 @@ def test_maintenance_reminder_fires_after_updates_clear(
     assert len(messages) == 1
 
 
+def test_maintenance_reminder_follows_notification_settings(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(
+        "uptray.gui.tray.send_message",
+        lambda summary, body, **_kwargs: messages.append(summary),
+    )
+    from uptray.core.maintenance import MaintenanceFinding
+
+    monkeypatch.setattr(
+        "uptray.gui.tray.maintenance_summary",
+        lambda **_kwargs: [MaintenanceFinding("orphans", "2 orphan package(s)", ["a"])],
+    )
+    with_updates = CheckResult(
+        source="pacman", updates=[Update("pkg", "1", "2", "pacman")]
+    )
+    done = CheckResult(source="pacman", updates=[])
+
+    tray._cfg.notifications.enabled = False
+    tray._on_check_done([with_updates])
+    tray._on_check_done([done])
+    assert messages == []
+    assert tray._state.maintenance_pending is True
+
+    tray._cfg.notifications.enabled = True
+    hour = datetime.now().hour
+    tray._cfg.notifications.quiet_hours_start = hour
+    tray._cfg.notifications.quiet_hours_end = (hour + 1) % 24
+    tray._on_check_done([done])
+    assert messages == []
+    assert tray._state.maintenance_pending is True
+
+    tray._cfg.notifications.quiet_hours_start = None
+    tray._cfg.notifications.quiet_hours_end = None
+    tray._on_check_done([done])
+    assert messages == ["Post-update maintenance"]
+    assert tray._state.maintenance_pending is False
+
+
+def test_pending_maintenance_is_dropped_when_updates_return(
+    tray: Tray, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    messages: list[str] = []
+    monkeypatch.setattr(
+        "uptray.gui.tray.send_message", lambda summary, *_a, **_k: messages.append(summary)
+    )
+    from uptray.core.maintenance import MaintenanceFinding
+
+    monkeypatch.setattr(
+        "uptray.gui.tray.maintenance_summary",
+        lambda **_kwargs: [MaintenanceFinding("orphans", "2 orphan package(s)", ["a"])],
+    )
+    tray._state.maintenance_pending = True
+    tray._state.maintenance_body = "• old count"
+
+    tray._on_check_done(
+        [CheckResult(source="pacman", updates=[Update("pkg", "1", "2", "pacman")])]
+    )
+
+    assert messages == []
+    assert tray._state.maintenance_pending is False
+
+
 @pytest.mark.parametrize("restriction", ["disabled", "quiet hours", "snoozed"])
 def test_automatic_maintenance_respects_notifications(
     tray: Tray,
     monkeypatch: pytest.MonkeyPatch,
     restriction: str,
 ) -> None:
+    from uptray.core.maintenance import MaintenanceFinding
+
     messages: list[str] = []
     maintenance_checks: list[int] = []
+
+    def summary() -> list[MaintenanceFinding]:
+        maintenance_checks.append(1)
+        return [MaintenanceFinding("orphans", "2 orphan package(s)", ["a"])]
+
     monkeypatch.setattr("uptray.gui.tray.send_message", lambda title, *_a: messages.append(title))
     monkeypatch.setattr("uptray.gui.tray.send_notification", lambda *_a, **_kw: None)
-    monkeypatch.setattr("uptray.gui.tray.maintenance_summary", lambda: maintenance_checks.append(1))
+    monkeypatch.setattr("uptray.gui.tray.maintenance_summary", summary)
     monkeypatch.setattr("uptray.gui.tray.is_quiet_hours", lambda *_a: restriction == "quiet hours")
     if restriction == "disabled":
         tray._cfg.notifications.enabled = False
@@ -261,8 +333,9 @@ def test_automatic_maintenance_respects_notifications(
     tray._on_check_done([CheckResult("pacman", [Update("pkg", "1", "2", "pacman")])])
     tray._on_check_done([CheckResult("pacman")])
 
-    assert maintenance_checks == []
+    assert maintenance_checks == [1]
     assert messages == []
+    assert tray._state.maintenance_pending is True
     assert tray._state.maintenance_check_date is None
 
 

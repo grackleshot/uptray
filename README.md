@@ -237,7 +237,7 @@ enabled = true
 [notifications]
 enabled = true
 quiet_hours_start = 23  # 11 PM
-quiet_hours_end = 7     # 7 AM
+quiet_hours_end = 7     # exclusive: quiet until 7 AM
 sound = false           # request the notification server's default sound
 
 # Tray behavior

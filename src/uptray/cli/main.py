@@ -354,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--quiet-hours-end",
         type=lambda value: _parse_bounded_int(value, minimum=0, maximum=23, label="hour"),
-        help="Override quiet-hours end hour (0–23)",
+        help="Override quiet-hours end hour (0–23, exclusive)",
     )
     parser.add_argument(
         "--no-quiet-hours", action="store_true",

@@ -20,6 +20,7 @@ _STR_FIELDS = (
     "snooze_until",
     "last_seen_news",
     "maintenance_check_date",
+    "maintenance_body",
 )
 
 
@@ -42,6 +43,8 @@ class AppState:
     last_seen_news: str | None = None  # ISO date of the newest read news item
     reboot_notified: bool = False  # Reboot notification already sent
     maintenance_check_date: str | None = None  # YYYY-MM-DD of last reminder
+    maintenance_pending: bool = False  # Reminder deferred by quiet hours, snooze, or settings
+    maintenance_body: str | None = None  # Text to send once notifications are allowed
 
 
 def load_state(path: Path | None = None) -> AppState:
@@ -66,6 +69,9 @@ def load_state(path: Path | None = None) -> AppState:
     reboot_notified = raw.get("reboot_notified")
     if isinstance(reboot_notified, bool):
         state.reboot_notified = reboot_notified
+    maintenance_pending = raw.get("maintenance_pending")
+    if isinstance(maintenance_pending, bool):
+        state.maintenance_pending = maintenance_pending
     return state
 
 
