@@ -153,6 +153,7 @@ class RunWindow(QMainWindow):
         self._activity_line = ""
         self._state_kind: str | None = None
         self._quitting = False
+        self._user_cancelled = False
         self._background_notice_sent = False
         self._task_progress = TaskProgress()
         self._terminal_size = (24, 80)
@@ -651,6 +652,7 @@ class RunWindow(QMainWindow):
         if self._session is not None and self._session.running:
             if not self.confirm_stop() or not self.is_active:
                 return
+            self._user_cancelled = True
             self._state_label.setText("Cancelling…")
             self._session.cancel()
         else:
@@ -672,6 +674,17 @@ class RunWindow(QMainWindow):
         self._btn_cancel.style().unpolish(self._btn_cancel)
         self._btn_cancel.style().polish(self._btn_cancel)
         elapsed = _format_elapsed(self._elapsed)
+        if self._user_cancelled:
+            self._progress.hide()
+            summary = f"Stopped after {elapsed}"
+            self._set_state("skipped", "Cancelled", html.escape(summary))
+            self._hero_actions.hide()
+            self._btn_cancel.setDefault(True)
+            set_primary(self._btn_cancel)
+            self.finished.emit(event.returncode)
+            if self._on_finished is not None:
+                self._on_finished(event.returncode)
+            return
         if event.returncode == 0:
             self._progress.setRange(0, 1)
             self._progress.setValue(1)

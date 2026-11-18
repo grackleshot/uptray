@@ -49,13 +49,13 @@ def test_tray_initialization(tray: Tray) -> None:
 
 def test_snooze_logic_updates_status_and_timer(tray: Tray) -> None:
     """Snoozing records a target time, updates the menu, and arms its timer."""
-    started = datetime.now()
+    started = datetime.now().astimezone()
 
     tray._snooze(2)
 
     assert tray._snooze_until is not None
     assert started + timedelta(hours=2) <= tray._snooze_until
-    assert abs((tray._snooze_until - datetime.now()).total_seconds() - 7200) < 1
+    assert abs((tray._snooze_until - datetime.now().astimezone()).total_seconds() - 7200) < 1
     assert tray._action_status.text().startswith("Snoozed until ")
     assert tray._snooze_timer.isActive()
     assert tray._snooze_timer.interval() == 7_200_000
@@ -82,7 +82,7 @@ def test_is_snoozed_clears_expired_target(tray: Tray) -> None:
     tray._snooze(1)
     assert tray._is_snoozed() is True
 
-    tray._snooze_until = datetime.now() - timedelta(seconds=1)
+    tray._snooze_until = datetime.now().astimezone() - timedelta(seconds=1)
     assert tray._is_snoozed() is False
     assert tray._snooze_until is None
 
@@ -347,6 +347,7 @@ def test_open_run_window_reshows_hidden_running_window(
             return None
 
     monkeypatch.setattr("uptray.gui.tray.RunWindow", FakeWindow)
+    monkeypatch.setattr("uptray.gui.tray.QMessageBox.information", lambda *_a, **_k: None)
     tray._run_window = FakeWindow()
 
     tray._open_run_window([])
@@ -487,3 +488,76 @@ def test_shutdown_waits_for_a_running_check(tray: Tray) -> None:
     tray.shutdown()
 
     assert waited  # destroying a running QThread aborts the process
+
+
+def test_preview_while_running_explains_why(tray: Tray, monkeypatch) -> None:  # noqa: ANN001
+    from PySide6.QtWidgets import QMessageBox, QWidget
+
+    window = QWidget()
+    window.is_active = True  # type: ignore[attr-defined]
+    window._is_dry_run = False  # type: ignore[attr-defined]
+    shown: list[str] = []
+    window.showNormal = lambda: shown.append("show")  # type: ignore[method-assign]
+    window.raise_ = lambda: None  # type: ignore[method-assign]
+    window.activateWindow = lambda: None  # type: ignore[method-assign]
+    tray._run_window = window  # type: ignore[assignment]
+    messages: list[tuple[object, ...]] = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *args, **_k: messages.append(args))
+
+    tray._preview_topgrade()
+
+    assert shown == ["show"]
+    assert any("already running" in str(arg) for arg in messages[0])
+
+
+def test_snooze_until_tomorrow_ends_at_local_midnight(tray: Tray) -> None:
+    from uptray.gui.tray_logic import next_local_midnight
+
+    tray._snooze_until_tomorrow()
+
+    assert tray._snooze_until == next_local_midnight()
+    assert tray._action_status.text().startswith("Snoozed until ")
+    assert tray._snooze_until.strftime("%Y-%m-%d") in tray._action_status.text()
+
+
+def test_run_tray_reports_a_lock_error(monkeypatch, capsys) -> None:  # noqa: ANN001
+    from uptray.gui.tray import run_tray
+
+    def boom() -> None:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr("uptray.gui.tray._acquire_instance_lock", boom)
+
+    assert run_tray(Config()) == 2
+    assert "could not create the tray lock" in capsys.readouterr().err
+
+
+def test_sigterm_quits_the_event_loop() -> None:
+    import os
+    import subprocess
+    import sys
+
+    script = """
+import os
+import signal
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+from uptray.gui.tray import install_termination_handler
+
+app = QApplication([])
+install_termination_handler(app)
+QTimer.singleShot(200, lambda: os.kill(os.getpid(), signal.SIGTERM))
+QTimer.singleShot(5000, lambda: os._exit(2))
+raise SystemExit(app.exec())
+"""
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        check=False,
+        timeout=15,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import signal
 import subprocess
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from PySide6.QtCore import QFileSystemWatcher, QThread, QTimer, Signal
+from PySide6.QtCore import QFileSystemWatcher, QSocketNotifier, QThread, QTimer, Signal
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystemTrayIcon
 
@@ -61,6 +62,8 @@ from uptray.gui.tray_logic import (
     _watch_resume,
     is_reboot_pending,
     is_snoozed,
+    local_now,
+    next_local_midnight,
     pacman_watch_dir,
     remaining_ms,
     snooze_label,
@@ -144,7 +147,7 @@ class Tray(QSystemTrayIcon):
         # Persistent state: restore snooze and notification dedup count.
         self._state: AppState = load_state(state_path)
         restored_snooze = parse_snooze(self._state.snooze_until)
-        if restored_snooze is not None and restored_snooze > datetime.now():
+        if restored_snooze is not None and is_snoozed(restored_snooze):
             self._snooze_until = restored_snooze
         self._notification_engine.prev_total = self._state.prev_total
 
@@ -253,7 +256,7 @@ class Tray(QSystemTrayIcon):
             f"Snooze {self._cfg.tray.snooze_hours} hours",
             lambda: self._snooze(self._cfg.tray.snooze_hours),
         )
-        snooze_menu.addAction("Snooze until tomorrow", lambda: self._snooze(24))
+        snooze_menu.addAction("Snooze until tomorrow", self._snooze_until_tomorrow)
         snooze_menu.addAction("Cancel snooze", lambda: self._snooze(None))
         self._menu.addSeparator()
         self._add_action("Quit", "application-exit", self._quit)
@@ -341,7 +344,7 @@ class Tray(QSystemTrayIcon):
     def _on_check_done(self, results: list[CheckResult], news: object = None) -> None:
         previous_package_total = self._package_total()
         self._results = results
-        self._last_check = datetime.now()
+        self._last_check = local_now()
         counts = {result.source: len(result.updates) for result in results}
         package_total = total_updates(results)
         snoozed = self._is_snoozed()
@@ -573,16 +576,29 @@ class Tray(QSystemTrayIcon):
 
     def _snooze(self, hours: int | None) -> None:
         if hours is None:
-            self._snooze_until = None
+            self._apply_snooze(None)
+            return
+        self._apply_snooze(
+            local_now() + timedelta(hours=hours),
+            interval_ms=hours * 60 * 60 * 1000,
+        )
+
+    def _snooze_until_tomorrow(self) -> None:
+        """Snooze until the next local midnight, not 24 hours from now."""
+        self._apply_snooze(next_local_midnight())
+
+    def _apply_snooze(self, until: datetime | None, *, interval_ms: int | None = None) -> None:
+        self._snooze_until = until
+        if until is None:
             self._snooze_timer.stop()
             self._notification_engine.reset_deduplication()
         else:
-            self._snooze_until = datetime.now() + timedelta(hours=hours)
-            self._snooze_timer.start(hours * 60 * 60 * 1000)
+            delay = remaining_ms(until) if interval_ms is None else interval_ms
+            self._snooze_timer.start(max(1, delay))
         self._persist_state()
         self._update_status_action()
         self._update_tooltip()
-        if hours is None:
+        if until is None:
             self._start_check()
 
     def _persist_state(self) -> None:
@@ -707,6 +723,12 @@ class Tray(QSystemTrayIcon):
             existing.showNormal()
             existing.raise_()
             existing.activateWindow()
+            kind = "preview" if getattr(existing, "_is_dry_run", False) else "update"
+            QMessageBox.information(
+                existing,
+                APP_NAME,
+                f"A {kind} is already running. This window shows that run.",
+            )
             return
         if existing is not None:
             existing.close()
@@ -757,17 +779,49 @@ class Tray(QSystemTrayIcon):
                 self._show_updates()
 
 
+def install_termination_handler(app: QApplication) -> None:
+    """Quit the Qt event loop on SIGTERM so tray.shutdown() still runs.
+
+    Python only runs signal handlers when the main thread is executing
+    bytecode, and app.exec() sits in Qt. The wakeup fd makes the signal
+    visible to a QSocketNotifier, which then quits on the GUI thread.
+    """
+    read_fd, write_fd = os.pipe()
+    os.set_blocking(read_fd, False)
+    os.set_blocking(write_fd, False)
+    signal.set_wakeup_fd(write_fd)
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: None)
+    notifier = QSocketNotifier(read_fd, QSocketNotifier.Type.Read, app)
+
+    def _drain(_socket: int) -> None:
+        try:
+            data = os.read(read_fd, 64)
+        except OSError:
+            return
+        if signal.SIGTERM in data:
+            app.quit()
+
+    notifier.activated.connect(_drain)
+    # Keep the notifier and the write end alive for the life of the app.
+    app._uptray_sigterm_notifier = notifier  # type: ignore[attr-defined]
+    app._uptray_sigterm_write_fd = write_fd  # type: ignore[attr-defined]
+
+
 def run_tray(cfg: Config | None = None) -> int:
     """Launch the PySide6 system tray applet (single instance)."""
     signal.signal(signal.SIGINT, signal.SIG_DFL)
-    signal.signal(signal.SIGTERM, signal.SIG_DFL)
 
-    instance_lock = _acquire_instance_lock()
+    try:
+        instance_lock = _acquire_instance_lock()
+    except OSError as exc:
+        print(f"Error: could not create the tray lock: {exc}", file=sys.stderr)
+        return 2
     if instance_lock is None:
         print("Error: uptray tray is already running.", file=sys.stderr)
         return 3
 
     app = QApplication(sys.argv)
+    install_termination_handler(app)
     app.setApplicationName(APP_NAME)
     app.setDesktopFileName(APP_ID)
     app.setQuitOnLastWindowClosed(False)

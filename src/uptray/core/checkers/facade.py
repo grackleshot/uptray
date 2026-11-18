@@ -76,7 +76,9 @@ def find_terminal(cfg: Config | None = None) -> tuple[str | None, list[str]]:
     env_term = shutil.which(os.environ.get("TERMINAL", ""))
     if env_term:
         return env_term, ["-e"]
-    for cmd in cfg.terminals:
+    # An empty saved list means "use the built-in defaults", not "no terminals".
+    terminals = cfg.terminals or Config().terminals
+    for cmd in terminals:
         path = shutil.which(cmd)
         if path:
             return path, ["-e"]

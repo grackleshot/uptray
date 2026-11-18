@@ -176,6 +176,22 @@ def test_cancel_declined_keeps_update_running(
     window.shutdown()
 
 
+def test_confirmed_cancel_is_not_reported_as_a_failure(
+    qapp, qtbot, tmp_path, monkeypatch, sent_messages  # noqa: ANN001
+) -> None:
+    from PySide6.QtWidgets import QMessageBox
+
+    window = _running_window(qtbot, tmp_path)
+    monkeypatch.setattr(
+        QMessageBox, "question", lambda *_a, **_k: QMessageBox.StandardButton.Yes
+    )
+
+    window._cancel()
+    qtbot.waitUntil(lambda: window._state_label.text() == "Cancelled", timeout=5000)
+    assert window._big_title.text() == "Cancelled"
+    assert "Update failed" not in [summary for summary, _body in sent_messages]
+
+
 def test_escape_closes_only_when_finished(qapp, qtbot, tmp_path) -> None:  # noqa: ANN001
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest

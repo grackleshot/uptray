@@ -207,7 +207,7 @@ class SettingsDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
-            lambda: self._populate(Config())
+            self._restore_defaults
         )
         root.addWidget(buttons)
         self._populate(cfg)
@@ -234,6 +234,11 @@ class SettingsDialog(QDialog):
         _select(self._quiet_start, cfg.notifications.quiet_hours_start)
         _select(self._quiet_end, cfg.notifications.quiet_hours_end)
         self._update_quiet_warning()
+
+    def _restore_defaults(self) -> None:
+        """Reset the form, including autostart, which is off by default."""
+        self._populate(Config())
+        self._autostart.setChecked(False)
 
     def _update_quiet_warning(self) -> None:
         """Show the warning when quiet hours would silently do nothing."""
@@ -263,6 +268,9 @@ class SettingsDialog(QDialog):
     def get_config(self) -> Config:
         """Build a new Config from the current widget state."""
         terminals = [term.strip() for term in self._terminals.text().split(",")]
+        terminals = [term for term in terminals if term]
+        if not terminals:
+            terminals = list(Config().terminals)
         sources: dict[str, SourceConfig] = {}
         for name, box in self._source_boxes.items():
             existing = self._cfg.sources.get(name)
@@ -278,7 +286,7 @@ class SettingsDialog(QDialog):
             custom_commands.append(replace(custom, enabled=custom_box.isChecked()))
         return Config(
             check_interval=self._interval_seconds(),
-            terminals=[term for term in terminals if term],
+            terminals=terminals,
             sources=sources,
             notifications=replace(
                 self._cfg.notifications,

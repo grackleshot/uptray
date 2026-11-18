@@ -131,6 +131,28 @@ def test_autostart_toggle_applies_on_accept(qapp, tmp_path, monkeypatch) -> None
     assert not autostart.AUTOSTART_FILE.exists()
 
 
+def test_restore_defaults_turns_autostart_off(qapp, tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    dest = tmp_path / "autostart"
+    monkeypatch.setattr(autostart, "AUTOSTART_DIR", dest)
+    monkeypatch.setattr(autostart, "AUTOSTART_FILE", dest / "uptray.desktop")
+    autostart.enable_autostart()
+    dialog = SettingsDialog(_sample_config())
+    assert dialog._autostart.isChecked()
+
+    dialog._restore_defaults()
+
+    assert not dialog._autostart.isChecked()
+    dialog.accept()
+    assert not autostart.AUTOSTART_FILE.exists()
+
+
+def test_blank_terminals_field_saves_the_defaults(qapp) -> None:  # noqa: ANN001
+    dialog = SettingsDialog(_sample_config())
+    dialog._terminals.setText("  ,  ")
+
+    assert dialog.get_config().terminals == list(Config().terminals)
+
+
 def test_settings_keeps_hand_edited_interval_unless_changed(qapp) -> None:  # noqa: ANN001
     dialog = SettingsDialog(Config(check_interval=450))
     assert dialog.get_config().check_interval == 450
