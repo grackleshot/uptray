@@ -20,6 +20,7 @@ def test_json_output_includes_flatpak_branch(capsys) -> None:
     _print_json([result], 1)
 
     payload = json.loads(capsys.readouterr().out)
+    assert payload["package_sources_checked"] == ["flatpak"]
     [update] = payload["sources"]["flatpak"]["updates"]
     assert update["branch"] == "stable"
 
@@ -120,15 +121,26 @@ def test_tray_config_error_sends_notification(monkeypatch, capsys) -> None:
     assert sent == []
 
 
-def test_cmd_check_reboot_only_exits_zero_and_reports_reboot(monkeypatch, capsys) -> None:
+@pytest.mark.parametrize("mode", ["--check", "--list", "--json"])
+def test_reboot_only_reports_missing_package_coverage(monkeypatch, capsys, mode) -> None:
     reboot = CheckResult(
         source="reboot", updates=[Update("kernel", "", "reboot required", "reboot")]
     )
     monkeypatch.setattr(cli, "check_all", lambda _cfg: [reboot])
 
-    code = cli.cmd_check(Config())
+    if mode == "--check":
+        code = cli.cmd_check(Config())
+    else:
+        code = cli.cmd_list(Config(), json_output=mode == "--json")
 
-    out = capsys.readouterr().out
-    assert code == 0
-    assert "Reboot required." in out
-    assert "System is up to date." in out
+    out, err = capsys.readouterr()
+    assert code == 2
+    assert "No package sources checked." in err
+    if mode == "--json":
+        payload = json.loads(out)
+        assert payload["total"] == 0
+        assert payload["package_sources_checked"] == []
+        assert payload["sources"]["reboot"]["updates"]
+    else:
+        assert "Reboot required." in out
+        assert "up to date" not in out

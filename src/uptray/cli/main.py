@@ -10,7 +10,7 @@ import sys
 
 from uptray import __version__
 from uptray.core.autostart import disable_autostart, enable_autostart
-from uptray.core.checkers import check_all, total_updates
+from uptray.core.checkers import check_all, has_package_sources, total_updates
 from uptray.core.config import load_config
 from uptray.core.logging import setup_logging
 from uptray.core.models import CheckResult, Config, SourceConfig, custom_checker_name
@@ -146,11 +146,13 @@ def cmd_check(cfg: Config, verbose: bool = False) -> int:
         print(f"{total} update(s) available.")
         _print_reboot_required(results)
         return 2 if has_errors else 1
-    if has_errors:
-        print("Update check incomplete; see errors above.", file=sys.stderr)
+    if not has_package_sources(results):
+        print("No package sources checked.", file=sys.stderr)
+        _print_reboot_required(results)
         return 2
-    if not results:
-        print("No update checkers are available.", file=sys.stderr)
+    if has_errors:
+        print("Update check incomplete. See errors above.", file=sys.stderr)
+        _print_reboot_required(results)
         return 2
     print("System is up to date.")
     _print_reboot_required(results)
@@ -168,17 +170,21 @@ def cmd_list(cfg: Config, *, json_output: bool = False) -> int:
     results = check_all(cfg)
     total = total_updates(results)
     has_errors = _report_checker_errors(results)
+    if not has_package_sources(results):
+        print("No package sources checked.", file=sys.stderr)
+        if json_output:
+            _print_json(results, total)
+        else:
+            _print_reboot_required(results)
+        return 2
 
     if json_output:
         _print_json(results, total)
-        return 2 if has_errors or not results else 0
+        return 2 if has_errors else 0
 
     if total == 0:
         if has_errors:
             print("No updates found by successful checks.")
-        elif not results:
-            print("No update checkers are available.")
-            return 2
         else:
             print("No updates available.")
         _print_reboot_required(results)
@@ -215,6 +221,7 @@ def _print_json(results: list[CheckResult], total: int) -> None:
             sources[r.source] = entry
     data: dict[str, object] = {
         "total": total,
+        "package_sources_checked": [r.source for r in results if r.source != "reboot"],
         "sources": sources,
     }
     print(json.dumps(data, indent=2))
