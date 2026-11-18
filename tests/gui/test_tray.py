@@ -379,6 +379,8 @@ def test_open_run_window_starts_new_run_after_finished(
     created: list[object] = []
 
     class FakeWindow:
+        def shutdown(self) -> None: ...
+
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             self.is_active = False
             self.monitor_status_changed = type("S", (), {"connect": lambda *_a: None})()
@@ -412,6 +414,8 @@ def test_open_run_window_reshows_hidden_running_window(
     created: list[object] = []
 
     class FakeWindow:
+        def shutdown(self) -> None: ...
+
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             self.is_active = True
             self.reshown = False
@@ -447,6 +451,8 @@ def test_active_run_is_visible_and_all_launch_actions_refocus_it(
     calls: list[str] = []
 
     class FakeWindow(QObject):
+        def shutdown(self) -> None: ...
+
         monitor_status_changed = Signal(str)
         monitor_status = "Preparing update"
         is_active = True
@@ -504,6 +510,8 @@ def test_run_after_preview_preserves_scope(
     callbacks: list[Callable[[], None]] = []
 
     class FakeWindow:
+        def shutdown(self) -> None: ...
+
         is_active = False
         monitor_status_changed = type("S", (), {"connect": lambda *_a: None})()
 
