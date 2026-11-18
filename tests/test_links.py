@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 
-from uptray.core.links import upstream_url
+from uptray.core.links import is_flatpak_runtime, upstream_url
 
 
 def _si_result(stdout: str, returncode: int = 0) -> subprocess.CompletedProcess[str]:
@@ -22,6 +22,13 @@ def test_aur_uses_aur_package_page() -> None:
 
 def test_flatpak_uses_flathub_page() -> None:
     assert upstream_url("org.mozilla.firefox", "flatpak") == "https://flathub.org/apps/org.mozilla.firefox"
+
+
+def test_flatpak_runtime_has_no_dead_app_link() -> None:
+    assert is_flatpak_runtime("org.freedesktop.Platform.GL.default")
+    assert not is_flatpak_runtime("org.mozilla.firefox")
+    assert upstream_url("org.freedesktop.Platform.GL.default", "flatpak") == ""
+    assert upstream_url("org.gnome.Platform", "flatpak") == ""
 
 
 def test_firmware_uses_fwupd_page() -> None:

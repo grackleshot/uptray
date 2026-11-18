@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from uptray.core.logging import get_logger
+
 TOPGRADE_STEP_MAP: dict[str, set[str]] = {
     "pacman": {"pacman"},
     "yay": {"aur"},
@@ -53,7 +55,7 @@ def _topgrade_d_dir() -> Path:
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
-    """Load one TOML file, returning {} when missing or unparsable."""
+    """Load one TOML file, returning {} when missing."""
     if not path.is_file():
         return {}
     try:
@@ -66,12 +68,17 @@ def _load_toml(path: Path) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge ``override`` into ``base``; override values win."""
+def _deep_merge(
+    base: dict[str, Any], override: dict[str, Any], *, section: str = ""
+) -> dict[str, Any]:
+    """Merge tables, preserving Topgrade's additive step filters across files."""
     merged = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
+            merged[key] = _deep_merge(merged[key], value, section=key)
+        elif section == "misc" and key in {"only", "disable"} and isinstance(value, list):
+            previous = merged.get(key)
+            merged[key] = value + previous if isinstance(previous, list) else value
         else:
             merged[key] = value
     return merged
@@ -80,8 +87,9 @@ def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any
 def load_topgrade_config(path: Path | None = None) -> dict[str, Any]:
     """Load topgrade config; when no path is given, merge topgrade.d/ + main file.
 
-    Mirrors topgrade itself: files in ``CONFIG_DIR/topgrade.d/`` are merged
-    first and the main ``topgrade.toml`` takes priority.
+    Mirrors topgrade itself: every file in ``CONFIG_DIR/topgrade.d/`` except
+    ``.DS_Store`` is merged first and the main ``topgrade.toml`` takes priority.
+    A drop-in that cannot be read or parsed is skipped with a warning.
     """
     if path is not None:
         return _load_toml(path)
@@ -89,8 +97,16 @@ def load_topgrade_config(path: Path | None = None) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     dropin_dir = _topgrade_d_dir()
     if dropin_dir.is_dir():
-        for dropin in sorted(dropin_dir.glob("*.toml")):
-            merged = _deep_merge(merged, _load_toml(dropin))
+        for dropin in sorted(dropin_dir.iterdir()):
+            if not dropin.is_file() or dropin.name.lower() == ".ds_store":
+                continue
+            try:
+                merged = _deep_merge(merged, _load_toml(dropin))
+            except (OSError, ValueError) as exc:
+                # Dropping the whole config here would re-enable every disabled checker.
+                get_logger("topgrade_config").warning(
+                    "Skipping Topgrade drop-in %s: %s", dropin, exc
+                )
 
     main = find_topgrade_toml()
     if main is not None:

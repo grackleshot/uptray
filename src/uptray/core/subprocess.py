@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from subprocess import CompletedProcess
 
-_DEFAULT_TIMEOUT = 30
+# Package checks (checkupdates, AUR helpers, flatpak, fwupdmgr) often sit on a
+# slow mirror well past 30s. Callers that probe something quick can pass a
+# shorter timeout explicitly.
+_DEFAULT_TIMEOUT = 120
 
 
 def run_checked(

@@ -6,7 +6,7 @@ from uptray.core.checkers.builtins import (
     FlatpakChecker,
     PacmanChecker,
 )
-from uptray.core.checkers.facade import check_all, find_terminal, total_updates
+from uptray.core.checkers.facade import check_all, find_terminal, has_package_sources, total_updates
 from uptray.core.checkers.reboot import RebootRequiredChecker
 
 __all__ = [
@@ -16,6 +16,7 @@ __all__ = [
     "FirmwareChecker",
     "RebootRequiredChecker",
     "check_all",
+    "has_package_sources",
     "total_updates",
     "find_terminal",
 ]

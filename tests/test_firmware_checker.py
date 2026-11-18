@@ -104,3 +104,31 @@ def test_firmware_checker_check_parses_json_output() -> None:
     assert update.old_version == "1.0"
     assert update.new_version == "2.0"
     assert update.source == "firmware"
+
+
+def test_firmware_checker_treats_exit_2_as_nothing_to_do() -> None:
+    """fwupd exit 2 with an empty device list means the firmware is current."""
+    completed = CompletedProcess(
+        args=["fwupdmgr", "get-updates", "--json"],
+        returncode=2,
+        stdout=json.dumps({"Devices": []}),
+        stderr="",
+    )
+    checker = FirmwareChecker()
+    with patch("uptray.core.checkers.builtins.run_checked", return_value=completed):
+        assert checker.check() == []
+
+
+def test_firmware_checker_still_errors_on_other_statuses() -> None:
+    completed = CompletedProcess(
+        args=["fwupdmgr", "get-updates", "--json"],
+        returncode=1,
+        stdout="",
+        stderr="daemon is not running",
+    )
+    checker = FirmwareChecker()
+    with (
+        patch("uptray.core.checkers.builtins.run_checked", return_value=completed),
+        pytest.raises(RuntimeError, match="daemon is not running"),
+    ):
+        checker.check()

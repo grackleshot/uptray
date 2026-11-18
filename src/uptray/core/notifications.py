@@ -113,7 +113,7 @@ class NotificationClient:
                         message = bus.recv_until_filtered(matches, timeout=0.25)
                     except TimeoutError:
                         continue
-                    self._handle_notification_signal(getattr(message, "body", ()))
+                    self._handle_notification_signal(message)
         except Exception as exc:
             get_logger("notifications").warning("Notification actions unavailable: %s", exc)
             self._action_listener_available = False
@@ -123,21 +123,27 @@ class NotificationClient:
                 with contextlib.suppress(Exception):
                     bus.close()
 
-    def _handle_notification_signal(self, body: object) -> None:
-        """Dispatch our own actions and forget ids that have closed."""
+    def _handle_notification_signal(self, message: object) -> None:
+        """Dispatch our own actions and forget ids that have closed.
+
+        Plasma sends ActivationToken(id, token) immediately before
+        ActionInvoked. Both are (id, string), so the member name decides.
+        """
+        body = getattr(message, "body", ())
         if not isinstance(body, (list, tuple)) or not body:
             return
         try:
             notification_id = int(body[0])
         except (TypeError, ValueError):
             return
-        # ActionInvoked is (id, action key). NotificationClosed is (id, reason).
-        if len(body) >= 2 and isinstance(body[1], str):
+        member = _signal_member(message)
+        if member == "ActionInvoked" and len(body) >= 2 and isinstance(body[1], str):
             if self._owns_notification(notification_id):
                 self._forget_notification(notification_id)
                 self._dispatch_action(body[1])
             return
-        self._forget_notification(notification_id)
+        if member == "NotificationClosed":
+            self._forget_notification(notification_id)
 
     def _owns_notification(self, notification_id: int) -> bool:
         with self._owned_lock:
@@ -185,6 +191,7 @@ class NotificationClient:
         on_action: Callable[[str], None] | None = None,
         urgency: str | None = None,
         sound: bool = False,
+        replace: bool = True,
     ) -> int | None:
         """Show a notification. Returns notification ID or None.
 
@@ -212,7 +219,9 @@ class NotificationClient:
                     if not self._action_listener_available or not self._supports_actions():
                         self._notify_send(summary, body, normalized_urgency, sound)
                         return None
-            return self._notify_dbus(summary, body, actions, normalized_urgency, sound)
+            return self._notify_dbus(
+                summary, body, actions, normalized_urgency, sound, replace=replace
+            )
         self._notify_send(summary, body, normalized_urgency, sound)
         return None
 
@@ -223,6 +232,7 @@ class NotificationClient:
         actions: list[tuple[str, str]] | None = None,
         urgency: str | None = None,
         sound: bool = False,
+        replace: bool = True,
     ) -> int | None:
         assert self._bus is not None and self._proxy is not None
         action_list: list[str] = []
@@ -237,7 +247,7 @@ class NotificationClient:
             "susssasa{sv}i",
             (
                 APP_NAME,
-                self._last_id,
+                self._last_id if replace else 0,
                 ICON_NAME,
                 summary,
                 body,
@@ -250,10 +260,14 @@ class NotificationClient:
             reply = self._bus.send_and_get_reply(msg, timeout=5)
             reply_body = getattr(reply, "body", ())
             if reply_body:
-                previous = self._last_id
-                self._last_id = int(reply_body[0])
-                self._note_notification(self._last_id, replaces=previous)
-                return self._last_id
+                notification_id = int(reply_body[0])
+                if replace:
+                    previous = self._last_id
+                    self._last_id = notification_id
+                    self._note_notification(notification_id, replaces=previous)
+                else:
+                    self._note_notification(notification_id)
+                return notification_id
             return None
         except Exception:
             self._notify_send(summary, body, urgency, sound)
@@ -320,6 +334,23 @@ class NotificationClient:
         if bus is not None:
             with contextlib.suppress(Exception):
                 bus.close()
+
+
+def _signal_member(message: object) -> str:
+    """Return the DBus signal member, or an empty string when it is absent."""
+    direct = getattr(message, "member", None)
+    if isinstance(direct, str):
+        return direct
+    header = getattr(message, "header", None)
+    fields = getattr(header, "fields", None)
+    if not isinstance(fields, dict):
+        return ""
+    try:
+        from jeepney import HeaderFields
+    except ImportError:
+        return ""
+    member = fields.get(HeaderFields.member)
+    return member if isinstance(member, str) else ""
 
 
 def format_source_counts(results: list[CheckResult]) -> str:
@@ -396,7 +427,9 @@ def send_message(
     owns_client = client is None
     notification_client = client or NotificationClient()
     try:
-        return notification_client.notify(summary, body, urgency=urgency, sound=sound)
+        return notification_client.notify(
+            summary, body, urgency=urgency, sound=sound, replace=False
+        )
     finally:
         if owns_client:
             notification_client.shutdown()

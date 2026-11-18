@@ -11,6 +11,10 @@ if os.environ.get("QT_QPA_PLATFORM", "offscreen") == "offscreen":
     os.environ["QT_QPA_PLATFORM"] = (
         f"offscreen:configfile={Path(__file__).with_name('offscreen-screen.json')}"
     )
+if os.environ["QT_QPA_PLATFORM"].split(":", 1)[0] == "offscreen":
+    # Chromium still starts a GPU process on this virtual screen unless told
+    # to use software rendering. The run-window tests exercise the real WebEngine.
+    os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --disable-gpu-compositing")
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
