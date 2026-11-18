@@ -733,6 +733,7 @@ class Tray(QSystemTrayIcon):
         dialog = SettingsDialog(self._cfg)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._apply_config(dialog.get_config())
+        dialog.deleteLater()  # its signal connections would otherwise keep it alive
 
     def _apply_config(self, cfg: Config) -> None:
         self._cfg = cfg
@@ -795,6 +796,8 @@ class Tray(QSystemTrayIcon):
             return
         if self._run_window is not None:
             self._run_window.close()
+            # Signal connections keep a closed window alive with its WebEngine views.
+            self._run_window.deleteLater()
         on_run_for_real: Callable[[], None] | None = None
         if extra_args and "--dry-run" in extra_args:
             update_args = [arg for arg in extra_args if arg != "--dry-run"]

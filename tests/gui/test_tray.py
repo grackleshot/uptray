@@ -398,6 +398,9 @@ def test_open_run_window_starts_new_run_after_finished(
         def close(self) -> None:
             return None
 
+        def deleteLater(self) -> None:  # noqa: N802
+            return None
+
         def show(self) -> None:
             return None
 
@@ -405,6 +408,62 @@ def test_open_run_window_starts_new_run_after_finished(
     tray._run_window = FakeWindow()
     tray._open_run_window([])
     assert len(created) == 2
+
+
+def test_replaced_run_window_is_destroyed_with_its_web_views(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+    qtbot,  # noqa: ANN001
+    tmp_path: Path,
+) -> None:
+    """Signal connections keep a closed window alive; each leaked one kept two renderers."""
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    from uptray.gui.run_window import RunWindow
+
+    script = tmp_path / "done.sh"
+    script.write_text("#!/bin/sh\necho done\n", encoding="utf-8")
+    monkeypatch.setattr(
+        "uptray.gui.tray.RunWindow",
+        lambda cfg, **kw: RunWindow(
+            cfg, command=["/bin/sh", str(script)], runs_dir=tmp_path / "runs", **kw
+        ),
+    )
+    monkeypatch.setattr("uptray.gui.tray.is_online", lambda: False)
+    tray._open_run_window([])
+    first = tray._run_window
+    assert first is not None
+    qtbot.waitUntil(lambda: not first.is_active, timeout=5000)
+    destroyed: list[bool] = []
+    first.destroyed.connect(lambda *_: destroyed.append(True))
+
+    tray._open_run_window([])
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert tray._run_window is not first
+    assert destroyed
+
+
+def test_closed_settings_dialog_is_destroyed(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PySide6.QtCore import QCoreApplication, QEvent
+    from PySide6.QtWidgets import QDialog
+
+    from uptray.gui.settings import SettingsDialog
+
+    destroyed: list[bool] = []
+
+    def exec_and_watch(dialog: SettingsDialog) -> int:
+        dialog.destroyed.connect(lambda *_: destroyed.append(True))
+        return QDialog.DialogCode.Rejected.value
+
+    monkeypatch.setattr(SettingsDialog, "exec", exec_and_watch)
+    tray._open_settings()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    assert destroyed
 
 
 def test_open_run_window_reshows_hidden_running_window(
