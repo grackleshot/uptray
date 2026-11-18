@@ -30,9 +30,9 @@ def sent_messages(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
 def _delete_leftover_qt_objects(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Stop each test's trays and destroy its windows on the GUI thread.
 
-    Leftovers crashed the test process. Tray threads ran the garbage collector,
-    which freed Qt objects off the GUI thread, and PySide's exit cleanup failed
-    on hundreds of windows after every test had passed (exit 139 or 134 on CI).
+    Leftovers crashed the test process with segfaults (exit 139). Tray threads
+    ran the garbage collector, which freed Qt objects off the GUI thread, and
+    PySide's exit cleanup failed on hundreds of windows after every test passed.
     """
     try:
         from PySide6.QtCore import QCoreApplication, QEvent

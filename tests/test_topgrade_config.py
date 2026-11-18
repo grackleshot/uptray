@@ -39,6 +39,23 @@ def test_load_topgrade_config_merges_topgrade_d_then_main_file(
     assert merged["misc"]["disable"] == ["pacman", "firmware", "flatpak"]
 
 
+def test_unparsable_dropin_is_skipped_without_dropping_other_files(
+    tmp_path, monkeypatch, caplog  # noqa: ANN001
+) -> None:
+    dropin = tmp_path / "topgrade.d"
+    dropin.mkdir()
+    (dropin / "10-disable.toml").write_text('[misc]\ndisable = ["flatpak"]\n')
+    (dropin / "README").write_text("Notes about these drop-ins: not TOML.\n")
+    (dropin / "20-broken.toml").write_text("[misc\n")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+    merged = load_topgrade_config()
+
+    assert merged["misc"]["disable"] == ["flatpak"]
+    assert "README" in caplog.text
+    assert "20-broken.toml" in caplog.text
+
+
 def test_get_disabled_steps_returns_false_top_level_steps_lowercased() -> None:
     cfg = {"Flatpak": False, "pacman": True, "linux": {"disabled": True}}
 

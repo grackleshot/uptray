@@ -72,6 +72,7 @@ APP_ID = "uptray"
 _ICON_NAME = "uptray"
 _MAX_MENU_PACKAGES = 15
 _MAX_NEWS_ITEMS = 8
+_CHECK_SHUTDOWN_TIMEOUT_MS = 10_000
 
 
 class CheckThread(QThread):
@@ -834,9 +835,15 @@ class Tray(QSystemTrayIcon):
         """Release background threads and the notification DBus connection."""
         self._closing = True
         self._stop_run_window()
-        if self._check_thread is not None and self._check_thread.isRunning():
-            # Qt aborts the process if a running QThread is destroyed at exit.
-            self._check_thread.wait()
+        # Qt aborts the process if a running QThread is destroyed at exit, but a stuck
+        # check must not hang quitting (and with it logout) forever.
+        thread = self._check_thread
+        if (
+            thread is not None
+            and thread.isRunning()
+            and not thread.wait(_CHECK_SHUTDOWN_TIMEOUT_MS)
+        ):
+            get_logger("tray").warning("Update check still running at quit")
         self._persist_state()
         self._resume_stop.set()
         if self._resume_thread.is_alive():

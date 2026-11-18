@@ -647,22 +647,23 @@ def test_show_updates_opens_dialog_on_errors(
     assert len(opened) == 1
 
 
-def test_shutdown_waits_for_a_running_check(tray: Tray) -> None:
-    waited: list[bool] = []
+def test_shutdown_waits_a_bounded_time_for_a_running_check(tray: Tray) -> None:
+    waited: list[tuple[object, ...]] = []
 
     class RunningThread:
         def isRunning(self) -> bool:  # noqa: N802
             return True
 
-        def wait(self) -> bool:
-            waited.append(True)
+        def wait(self, *timeout: object) -> bool:
+            waited.append(timeout)
             return True
 
     tray._check_thread = RunningThread()  # type: ignore[assignment]
 
     tray.shutdown()
 
-    assert waited  # destroying a running QThread aborts the process
+    # Destroying a running QThread aborts the process, but a stuck check must not hang quit.
+    assert waited and waited[0] and 0 < waited[0][0] <= 30_000  # type: ignore[operator]
 
 
 @pytest.mark.parametrize("offline", [False, True])

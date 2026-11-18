@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+from uptray.core.logging import get_logger
+
 TOPGRADE_STEP_MAP: dict[str, set[str]] = {
     "pacman": {"pacman"},
     "yay": {"aur"},
@@ -85,8 +87,9 @@ def _deep_merge(
 def load_topgrade_config(path: Path | None = None) -> dict[str, Any]:
     """Load topgrade config; when no path is given, merge topgrade.d/ + main file.
 
-    Mirrors topgrade itself: files in ``CONFIG_DIR/topgrade.d/`` are merged
-    first and the main ``topgrade.toml`` takes priority.
+    Mirrors topgrade itself: every file in ``CONFIG_DIR/topgrade.d/`` except
+    ``.DS_Store`` is merged first and the main ``topgrade.toml`` takes priority.
+    A drop-in that cannot be read or parsed is skipped with a warning.
     """
     if path is not None:
         return _load_toml(path)
@@ -95,8 +98,15 @@ def load_topgrade_config(path: Path | None = None) -> dict[str, Any]:
     dropin_dir = _topgrade_d_dir()
     if dropin_dir.is_dir():
         for dropin in sorted(dropin_dir.iterdir()):
-            if dropin.is_file() and dropin.name.lower() != ".ds_store":
+            if not dropin.is_file() or dropin.name.lower() == ".ds_store":
+                continue
+            try:
                 merged = _deep_merge(merged, _load_toml(dropin))
+            except (OSError, ValueError) as exc:
+                # Dropping the whole config here would re-enable every disabled checker.
+                get_logger("topgrade_config").warning(
+                    "Skipping Topgrade drop-in %s: %s", dropin, exc
+                )
 
     main = find_topgrade_toml()
     if main is not None:

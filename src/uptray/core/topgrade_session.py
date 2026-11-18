@@ -741,7 +741,11 @@ class TopgradeSession:
         return self._returncode
 
     def close(self) -> None:
-        """Terminate an active run and wait for its remaining output to drain."""
+        """Stop the child if it is still running, then wait up to 2 s for its output.
+
+        This ends the run: its process group gets SIGTERM, then SIGKILL after
+        3 s (see :meth:`cancel`). Do not call it to merely detach from a run.
+        """
         self.cancel()
         if self._reader is not None and self._reader is not threading.current_thread():
             self.wait(timeout=2)
