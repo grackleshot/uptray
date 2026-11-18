@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from uptray.core.checkers import facade
+from uptray.core.models import Config
 
 
 def test_get_topgrade_disabled_checkers_maps_topgrade_toml_steps(tmp_path, monkeypatch) -> None:
@@ -16,7 +17,8 @@ def test_get_topgrade_disabled_checkers_maps_topgrade_toml_steps(tmp_path, monke
 
 
 def test_get_topgrade_disabled_checkers_returns_empty_set_without_topgrade_toml(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ) -> None:
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
@@ -35,3 +37,15 @@ def test_checker_selection_honors_dropins(tmp_path, monkeypatch, with_main) -> N
         (tmp_path / "topgrade.toml").write_text('[misc]\nonly = ["firmware"]\n')
     expected = {"flatpak"} if with_main else {"firmware", "flatpak"}
     assert facade._get_topgrade_disabled_checkers() == expected
+
+
+def test_empty_terminal_list_uses_the_builtin_defaults(monkeypatch) -> None:  # noqa: ANN001
+    def which(cmd: str) -> str | None:
+        if cmd == "konsole":
+            return "/usr/bin/konsole"
+        return None
+
+    monkeypatch.setattr(facade.shutil, "which", which)
+    monkeypatch.delenv("TERMINAL", raising=False)
+
+    assert facade.find_terminal(Config(terminals=[])) == ("/usr/bin/konsole", ["-e"])

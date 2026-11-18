@@ -17,7 +17,7 @@ def is_quiet_hours(
     """
     if start is None or end is None or start == end:
         return False
-    hour = (now or datetime.now()).hour
+    hour = (now or datetime.now().astimezone()).hour
     if start < end:
         return start <= hour < end
     return hour >= start or hour < end

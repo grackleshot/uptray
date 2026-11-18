@@ -217,7 +217,9 @@ class SettingsDialog(QDialog):
         self.resize(max(540, content.sizeHint().width() + 48), min(wanted, int(available * 0.9)))
 
     def _restore_defaults(self) -> None:
+        """Reset the form, including autostart, which is off by default."""
         self._populate(Config())
+        self._autostart.setChecked(False)
 
     def _populate(self, cfg: Config) -> None:
         """Fill every widget from cfg (also used by Restore Defaults)."""
@@ -267,6 +269,9 @@ class SettingsDialog(QDialog):
     def get_config(self) -> Config:
         """Build a new Config from the current widget state."""
         terminals = [term.strip() for term in self._terminals.text().split(",")]
+        terminals = [term for term in terminals if term]
+        if not terminals:
+            terminals = list(Config().terminals)
         sources: dict[str, SourceConfig] = {}
         for name, box in self._source_boxes.items():
             existing = self._cfg.sources.get(name)
@@ -282,7 +287,7 @@ class SettingsDialog(QDialog):
             custom_commands.append(replace(custom, enabled=custom_box.isChecked()))
         return Config(
             check_interval=self._interval_seconds(),
-            terminals=[term for term in terminals if term],
+            terminals=terminals,
             sources=sources,
             notifications=replace(
                 self._cfg.notifications,

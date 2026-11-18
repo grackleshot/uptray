@@ -418,6 +418,11 @@ class RunWindow(QMainWindow):
         return self._returncode is None and not self._quitting
 
     @property
+    def is_dry_run(self) -> bool:
+        """True when this window is showing a preview rather than an update."""
+        return self._is_dry_run
+
+    @property
     def monitor_status(self) -> str:
         """Compact description for the tray while the monitor is running."""
         return self._monitor_status

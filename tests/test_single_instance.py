@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import errno
 import os
+
+import pytest
 
 from uptray.gui.tray_logic import _acquire_instance_lock
 
@@ -30,3 +33,38 @@ def test_lock_file_records_pid(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     lock_file = tmp_path / "uptray.lock"
     assert lock_file.read_text(encoding="utf-8").strip() == str(os.getpid())
     handle.close()
+
+
+def test_contended_lock_closes_the_handle(tmp_path, monkeypatch) -> None:  # noqa: ANN001
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+    opened: list[object] = []
+    real_fdopen = os.fdopen
+
+    def tracking_fdopen(fd: int, mode: str = "r", *args: object, **kwargs: object) -> object:
+        handle = real_fdopen(fd, mode, *args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    def busy(*_args: object, **_kwargs: object) -> None:
+        raise BlockingIOError(errno.EAGAIN, "busy")
+
+    monkeypatch.setattr("uptray.gui.tray_logic.os.fdopen", tracking_fdopen)
+    monkeypatch.setattr("uptray.gui.tray_logic.fcntl.flock", busy)
+
+    assert _acquire_instance_lock() is None
+    assert opened
+    assert opened[0].closed  # type: ignore[attr-defined]
+
+
+def test_lock_does_not_treat_other_oserrors_as_already_running(
+    tmp_path, monkeypatch
+) -> None:  # noqa: ANN001
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
+
+    def denied(*_args: object, **_kwargs: object) -> None:
+        raise PermissionError(errno.EACCES, "denied")
+
+    monkeypatch.setattr("uptray.gui.tray_logic.fcntl.flock", denied)
+
+    with pytest.raises(PermissionError):
+        _acquire_instance_lock()

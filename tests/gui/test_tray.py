@@ -55,13 +55,13 @@ def test_tray_initialization(tray: Tray) -> None:
 
 def test_snooze_logic_updates_status_and_timer(tray: Tray) -> None:
     """Snoozing records a target time, updates the menu, and arms its timer."""
-    started = datetime.now()
+    started = datetime.now().astimezone()
 
     tray._snooze(2)
 
     assert tray._snooze_until is not None
     assert started + timedelta(hours=2) <= tray._snooze_until
-    assert abs((tray._snooze_until - datetime.now()).total_seconds() - 7200) < 1
+    assert abs((tray._snooze_until - datetime.now().astimezone()).total_seconds() - 7200) < 1
     assert tray._action_status.text().startswith("Snoozed until ")
     assert tray._snooze_timer.isActive()
     assert tray._snooze_timer.interval() == 7_200_000
@@ -88,7 +88,7 @@ def test_is_snoozed_clears_expired_target(tray: Tray) -> None:
     tray._snooze(1)
     assert tray._is_snoozed() is True
 
-    tray._snooze_until = datetime.now() - timedelta(seconds=1)
+    tray._snooze_until = datetime.now().astimezone() - timedelta(seconds=1)
     assert tray._is_snoozed() is False
     assert tray._snooze_until is None
 
@@ -115,9 +115,7 @@ def test_partial_check_failure_is_visible_in_status_and_tooltip(
 
     tray._on_check_done(results)
 
-    assert tray._action_status.text().startswith(
-        "1 update(s) available; 1 source(s) failed"
-    )
+    assert tray._action_status.text().startswith("1 update(s) available; 1 source(s) failed")
     assert "1 source check(s) failed" in tray.toolTip()
     assert [label for _, label in sent_notifications[0]["actions"]] == [
         "Run Topgrade",
@@ -228,9 +226,7 @@ def test_maintenance_reminder_fires_after_updates_clear(
 
     monkeypatch.setattr("uptray.gui.tray.maintenance_summary", fake_summary)
 
-    with_updates = CheckResult(
-        source="pacman", updates=[Update("pkg", "1", "2", "pacman")]
-    )
+    with_updates = CheckResult(source="pacman", updates=[Update("pkg", "1", "2", "pacman")])
     done = CheckResult(source="pacman", updates=[])
     tray._on_check_done([with_updates])
     tray._on_check_done([done])
@@ -575,6 +571,7 @@ def test_open_run_window_reshows_hidden_running_window(
             return None
 
     monkeypatch.setattr("uptray.gui.tray.RunWindow", FakeWindow)
+    monkeypatch.setattr("uptray.gui.tray.QMessageBox.information", lambda *_a, **_k: None)
     tray._run_window = FakeWindow()
 
     tray._open_run_window([])
@@ -658,9 +655,7 @@ def test_run_after_preview_preserves_scope(
         monitor_status_changed = type("S", (), {"connect": lambda *_a: None})()
         closed = type("S", (), {"connect": lambda *_a: None})()
 
-        def __init__(
-            self, *_a: object, on_run_for_real: Callable[[], None], **_kw: object
-        ) -> None:
+        def __init__(self, *_a: object, on_run_for_real: Callable[[], None], **_kw: object) -> None:
             callbacks.append(on_run_for_real)
 
         def show(self) -> None: ...
@@ -691,9 +686,7 @@ def test_quit_stops_running_window_before_quitting(
         def shutdown(self) -> None:
             calls.append("window")
 
-    monkeypatch.setattr(
-        "uptray.gui.tray.QApplication.quit", lambda: calls.append("quit")
-    )
+    monkeypatch.setattr("uptray.gui.tray.QApplication.quit", lambda: calls.append("quit"))
     tray._run_window = FakeWindow()
 
     tray._quit()
@@ -733,9 +726,7 @@ def test_forced_check_runs_while_snoozed(tray: Tray, monkeypatch: pytest.MonkeyP
     assert started == [1]
 
 
-def test_reboot_flag_stays_false_while_snoozed(
-    tray: Tray, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_reboot_flag_stays_false_while_snoozed(tray: Tray, monkeypatch: pytest.MonkeyPatch) -> None:
     sent: list[str] = []
     monkeypatch.setattr("uptray.gui.tray.send_message", lambda s, *a, **k: sent.append(s))
     monkeypatch.setattr("uptray.gui.tray.maintenance_summary", lambda: [])
@@ -750,9 +741,7 @@ def test_reboot_flag_stays_false_while_snoozed(
     assert tray._state.reboot_notified is False
 
 
-def test_default_left_click_shows_updates(
-    tray: Tray, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_default_left_click_shows_updates(tray: Tray, monkeypatch: pytest.MonkeyPatch) -> None:
     from PySide6.QtWidgets import QSystemTrayIcon
 
     tray._cfg.tray.click_action = "default"
@@ -764,9 +753,7 @@ def test_default_left_click_shows_updates(
     assert shown == [1]
 
 
-def test_show_updates_opens_dialog_on_errors(
-    tray: Tray, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_show_updates_opens_dialog_on_errors(tray: Tray, monkeypatch: pytest.MonkeyPatch) -> None:
     opened: list[object] = []
 
     class FakeDialog:
@@ -807,6 +794,91 @@ def test_shutdown_waits_a_bounded_time_for_a_running_check(tray: Tray) -> None:
 
     # Destroying a running QThread aborts the process, but a stuck check must not hang quit.
     assert waited and waited[0] and 0 < waited[0][0] <= 30_000  # type: ignore[operator]
+
+
+def test_preview_while_an_update_is_running_uses_a_tray_hint(tray: Tray) -> None:
+    from PySide6.QtWidgets import QWidget
+
+    window = QWidget()
+    window.is_active = True  # type: ignore[attr-defined]
+    window.is_dry_run = False  # type: ignore[attr-defined]
+    shown: list[str] = []
+    window.showNormal = lambda: shown.append("show")  # type: ignore[method-assign]
+    window.raise_ = lambda: None  # type: ignore[method-assign]
+    window.activateWindow = lambda: None  # type: ignore[method-assign]
+    window.focus_pending_input = lambda: None  # type: ignore[method-assign]
+    tray._run_window = window  # type: ignore[assignment]
+    messages: list[tuple[object, ...]] = []
+    tray.showMessage = lambda *args, **_kwargs: messages.append(args)  # type: ignore[method-assign]
+
+    tray._preview_topgrade()
+
+    assert shown == ["show"]
+    assert messages and "preview" in str(messages[0])
+    assert "update" in str(messages[0])
+
+    messages.clear()
+    shown.clear()
+    window.is_dry_run = True  # type: ignore[attr-defined]
+    tray._preview_topgrade()
+
+    assert shown == ["show"]
+    assert messages == []
+    tray._run_window = None
+
+
+def test_snooze_until_tomorrow_ends_at_local_midnight(tray: Tray) -> None:
+    from uptray.gui.tray_logic import next_local_midnight
+
+    tray._snooze_until_tomorrow()
+
+    assert tray._snooze_until == next_local_midnight()
+    assert tray._action_status.text().startswith("Snoozed until ")
+    assert tray._snooze_until.strftime("%Y-%m-%d") in tray._action_status.text()
+
+
+def test_run_tray_reports_a_lock_error(monkeypatch, capsys) -> None:  # noqa: ANN001
+    from uptray.gui.tray import run_tray
+
+    def boom() -> None:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr("uptray.gui.tray._acquire_instance_lock", boom)
+
+    assert run_tray(Config()) == 2
+    assert "could not create the tray lock" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("signum", ["SIGTERM", "SIGHUP"])
+def test_quit_signals_quit_the_event_loop(signum: str) -> None:
+    import os
+    import subprocess
+    import sys
+
+    script = f"""
+import os
+import signal
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication
+from uptray.gui.tray import install_termination_handler
+
+app = QApplication([])
+install_termination_handler(app)
+QTimer.singleShot(200, lambda: os.kill(os.getpid(), signal.{signum}))
+QTimer.singleShot(5000, lambda: os._exit(2))
+raise SystemExit(app.exec())
+"""
+    env = os.environ.copy()
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        check=False,
+        timeout=15,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("offline", [False, True])
