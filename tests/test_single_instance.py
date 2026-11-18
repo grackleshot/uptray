@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import errno
 import os
-from pathlib import Path
 
 import pytest
 
@@ -39,18 +38,17 @@ def test_lock_file_records_pid(tmp_path, monkeypatch) -> None:  # noqa: ANN001
 def test_contended_lock_closes_the_handle(tmp_path, monkeypatch) -> None:  # noqa: ANN001
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
     opened: list[object] = []
-    real_open = Path.open
+    real_fdopen = os.fdopen
 
-    def tracking_open(self: Path, *args: object, **kwargs: object) -> object:
-        handle = real_open(self, *args, **kwargs)
-        if self.name == "uptray.lock":
-            opened.append(handle)
+    def tracking_fdopen(fd: int, mode: str = "r", *args: object, **kwargs: object) -> object:
+        handle = real_fdopen(fd, mode, *args, **kwargs)
+        opened.append(handle)
         return handle
 
     def busy(*_args: object, **_kwargs: object) -> None:
         raise BlockingIOError(errno.EAGAIN, "busy")
 
-    monkeypatch.setattr(Path, "open", tracking_open)
+    monkeypatch.setattr("uptray.gui.tray_logic.os.fdopen", tracking_fdopen)
     monkeypatch.setattr("uptray.gui.tray_logic.fcntl.flock", busy)
 
     assert _acquire_instance_lock() is None

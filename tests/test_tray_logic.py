@@ -1,9 +1,17 @@
 from __future__ import annotations
 
+import os
+import stat
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from uptray.gui.tray_logic import is_snoozed, next_local_midnight, snooze_label
+from uptray.gui.tray_logic import (
+    _acquire_instance_lock,
+    is_snoozed,
+    next_local_midnight,
+    snooze_label,
+)
 
 
 def test_is_snoozed_only_when_until_time_is_in_future() -> None:
@@ -52,3 +60,28 @@ def test_next_local_midnight_follows_daylight_saving_rules(monkeypatch) -> None:
     autumn_midnight = next_local_midnight(autumn)
     assert autumn_midnight == datetime(2026, 11, 2, 0, 0, tzinfo=zone)
     assert autumn_midnight.utcoffset() == timedelta(hours=-8)
+
+    chicago = ZoneInfo("America/Chicago")
+    monkeypatch.setattr("uptray.gui.tray_logic.local_zone", lambda: chicago)
+    early = datetime(2026, 3, 8, 0, 30, tzinfo=timezone(timedelta(hours=-6)))
+    chicago_midnight = next_local_midnight(early)
+    assert chicago_midnight == datetime(2026, 3, 9, 0, 0, tzinfo=chicago)
+    assert chicago_midnight.utcoffset() == timedelta(hours=-5)
+
+
+def test_instance_lock_truncates_only_after_it_is_held(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    lock = runtime / "uptray.lock"
+    lock.write_text("999\n", encoding="utf-8")
+    lock.chmod(0o644)
+
+    first = _acquire_instance_lock()
+
+    assert first is not None
+    assert lock.read_text(encoding="utf-8") == f"{os.getpid()}\n"
+    assert stat.S_IMODE(lock.stat().st_mode) == 0o600
+    assert _acquire_instance_lock() is None
+    assert lock.read_text(encoding="utf-8") == f"{os.getpid()}\n"
+    first.close()

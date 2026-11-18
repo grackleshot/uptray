@@ -772,10 +772,12 @@ class Tray(QSystemTrayIcon):
         self._update_status_surfaces()
 
     def _run_topgrade(self, extra_args: list[str] | None = None) -> None:
-        self._open_run_window(list(extra_args or []), explain_if_running=True)
+        self._open_run_window(list(extra_args or []), requested_dry_run=False)
 
     def _preview_topgrade(self) -> None:
-        self._open_run_window(["--dry-run"], title="Uptray — Dry Run", explain_if_running=True)
+        self._open_run_window(
+            ["--dry-run"], title="Uptray — Dry Run", requested_dry_run=True
+        )
 
     def _run_topgrade_terminal(self) -> None:
         if not self._open_current_run():
@@ -795,16 +797,23 @@ class Tray(QSystemTrayIcon):
         window.focus_pending_input()
         return True
 
-    def _explain_running_window(self) -> None:
-        """Tell the user a new preview or update was not started."""
+    def _note_different_run(self, requested_dry_run: bool) -> None:
+        """Say so when a preview was asked during an update, or the reverse.
+
+        The same kind of request is how a hidden run is brought back, so it
+        raises the window without a message. The hint is a tray balloon, which
+        does not take focus from a prompt in the run window.
+        """
         window = self._active_run()
-        if window is None:
+        if window is None or window.is_dry_run == requested_dry_run:
             return
-        kind = "preview" if getattr(window, "_is_dry_run", False) else "update"
-        QMessageBox.information(
-            window,
+        active = "preview" if window.is_dry_run else "update"
+        asked = "preview" if requested_dry_run else "update"
+        self.showMessage(
             APP_NAME,
-            f"A {kind} is already running. This window shows that run.",
+            f"A {active} is already running, so this {asked} was not started.",
+            QSystemTrayIcon.MessageIcon.Information,
+            5000,
         )
 
     @Slot(str)
@@ -823,14 +832,14 @@ class Tray(QSystemTrayIcon):
         extra_args: list[str] | None = None,
         *,
         title: str | None = None,
-        explain_if_running: bool = False,
+        requested_dry_run: bool | None = None,
     ) -> None:
         # Keep a strong reference so the non-modal window is not garbage-collected.
         # Reuse only while a session is still running; finished windows must not
         # block a new dry-run/update request.
         if self._open_current_run():
-            if explain_if_running:
-                self._explain_running_window()
+            if requested_dry_run is not None:
+                self._note_different_run(requested_dry_run)
             return
         if self._run_window is not None:
             self._run_window.close()  # finished, so it really closes and is deleted
@@ -898,7 +907,7 @@ class Tray(QSystemTrayIcon):
 
 
 def install_termination_handler(app: QApplication) -> None:
-    """Quit the Qt event loop on SIGTERM so tray.shutdown() still runs.
+    """Quit the Qt event loop on SIGTERM or SIGHUP so tray.shutdown() still runs.
 
     Python only runs signal handlers when the main thread is executing
     bytecode, and app.exec() sits in Qt. The wakeup fd makes the signal
@@ -908,15 +917,17 @@ def install_termination_handler(app: QApplication) -> None:
     os.set_blocking(read_fd, False)
     os.set_blocking(write_fd, False)
     signal.set_wakeup_fd(write_fd)
-    signal.signal(signal.SIGTERM, lambda _signum, _frame: None)
+    for signum in (signal.SIGTERM, signal.SIGHUP):
+        signal.signal(signum, lambda _signum, _frame: None)
     notifier = QSocketNotifier(read_fd, QSocketNotifier.Type.Read, app)
+    quit_signals = {signal.SIGTERM, signal.SIGHUP}
 
     def _drain(_socket: int) -> None:
         try:
             data = os.read(read_fd, 64)
         except OSError:
             return
-        if signal.SIGTERM in data:
+        if any(signum in data for signum in quit_signals):
             app.quit()
 
     notifier.activated.connect(_drain)

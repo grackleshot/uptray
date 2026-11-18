@@ -796,12 +796,12 @@ def test_shutdown_waits_a_bounded_time_for_a_running_check(tray: Tray) -> None:
     assert waited and waited[0] and 0 < waited[0][0] <= 30_000  # type: ignore[operator]
 
 
-def test_preview_while_running_explains_why(tray: Tray, monkeypatch) -> None:  # noqa: ANN001
-    from PySide6.QtWidgets import QMessageBox, QWidget
+def test_preview_while_an_update_is_running_uses_a_tray_hint(tray: Tray) -> None:
+    from PySide6.QtWidgets import QWidget
 
     window = QWidget()
     window.is_active = True  # type: ignore[attr-defined]
-    window._is_dry_run = False  # type: ignore[attr-defined]
+    window.is_dry_run = False  # type: ignore[attr-defined]
     shown: list[str] = []
     window.showNormal = lambda: shown.append("show")  # type: ignore[method-assign]
     window.raise_ = lambda: None  # type: ignore[method-assign]
@@ -809,16 +809,18 @@ def test_preview_while_running_explains_why(tray: Tray, monkeypatch) -> None:  #
     window.focus_pending_input = lambda: None  # type: ignore[method-assign]
     tray._run_window = window  # type: ignore[assignment]
     messages: list[tuple[object, ...]] = []
-    monkeypatch.setattr(QMessageBox, "information", lambda *args, **_k: messages.append(args))
+    tray.showMessage = lambda *args, **_kwargs: messages.append(args)  # type: ignore[method-assign]
 
     tray._preview_topgrade()
 
     assert shown == ["show"]
-    assert any("already running" in str(arg) for arg in messages[0])
+    assert messages and "preview" in str(messages[0])
+    assert "update" in str(messages[0])
 
     messages.clear()
     shown.clear()
-    tray._open_current_run()
+    window.is_dry_run = True  # type: ignore[attr-defined]
+    tray._preview_topgrade()
 
     assert shown == ["show"]
     assert messages == []
@@ -847,12 +849,13 @@ def test_run_tray_reports_a_lock_error(monkeypatch, capsys) -> None:  # noqa: AN
     assert "could not create the tray lock" in capsys.readouterr().err
 
 
-def test_sigterm_quits_the_event_loop() -> None:
+@pytest.mark.parametrize("signum", ["SIGTERM", "SIGHUP"])
+def test_quit_signals_quit_the_event_loop(signum: str) -> None:
     import os
     import subprocess
     import sys
 
-    script = """
+    script = f"""
 import os
 import signal
 from PySide6.QtCore import QTimer
@@ -861,7 +864,7 @@ from uptray.gui.tray import install_termination_handler
 
 app = QApplication([])
 install_termination_handler(app)
-QTimer.singleShot(200, lambda: os.kill(os.getpid(), signal.SIGTERM))
+QTimer.singleShot(200, lambda: os.kill(os.getpid(), signal.{signum}))
 QTimer.singleShot(5000, lambda: os._exit(2))
 raise SystemExit(app.exec())
 """

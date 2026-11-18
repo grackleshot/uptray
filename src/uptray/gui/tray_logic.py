@@ -151,8 +151,11 @@ def _acquire_instance_lock() -> IO[str] | None:
     handle: IO[str] | None = None
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
-        handle = lock_path.open("w")
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # O_RDWR keeps the current PID until this process holds the lock.
+        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        handle = os.fdopen(fd, "r+")
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.fchmod(fd, 0o600)
     except OSError as exc:
         if handle is not None:
             handle.close()
@@ -163,6 +166,7 @@ def _acquire_instance_lock() -> IO[str] | None:
         if contended:
             return None
         raise
+    handle.seek(0)
     handle.truncate(0)
     handle.write(f"{os.getpid()}\n")
     handle.flush()
