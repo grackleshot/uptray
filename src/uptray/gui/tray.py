@@ -733,7 +733,6 @@ class Tray(QSystemTrayIcon):
         dialog = SettingsDialog(self._cfg)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self._apply_config(dialog.get_config())
-        dialog.deleteLater()  # its signal connections would otherwise keep it alive
 
     def _apply_config(self, cfg: Config) -> None:
         self._cfg = cfg
@@ -783,6 +782,13 @@ class Tray(QSystemTrayIcon):
     def _on_monitor_status_changed(self, _status: str) -> None:
         self._update_status_surfaces()
 
+    def _on_run_window_closed(self, window: RunWindow) -> None:
+        # close() never frees this parentless window: Qt holds lambdas wired to its own
+        # buttons, and they capture it. Each leaked window kept two WebEngine renderers.
+        window.deleteLater()
+        if self._run_window is window:
+            self._run_window = None
+
     def _open_run_window(
         self,
         extra_args: list[str] | None = None,
@@ -795,9 +801,7 @@ class Tray(QSystemTrayIcon):
         if self._open_current_run():
             return
         if self._run_window is not None:
-            self._run_window.close()
-            # Signal connections keep a closed window alive with its WebEngine views.
-            self._run_window.deleteLater()
+            self._run_window.close()  # finished, so it really closes and is deleted
         on_run_for_real: Callable[[], None] | None = None
         if extra_args and "--dry-run" in extra_args:
             update_args = [arg for arg in extra_args if arg != "--dry-run"]
@@ -813,6 +817,7 @@ class Tray(QSystemTrayIcon):
         )
         self._run_window = window
         window.monitor_status_changed.connect(self._on_monitor_status_changed)
+        window.closed.connect(partial(self._on_run_window_closed, window))
         if window.is_active:
             self.setIcon(self._icon_cache.checking())
         self._update_status_surfaces()

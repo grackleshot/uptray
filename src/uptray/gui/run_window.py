@@ -113,6 +113,7 @@ class RunWindow(QMainWindow):
     finished = Signal(int)
     session_event = Signal(object)
     monitor_status_changed = Signal(str)
+    closed = Signal()  # really closed, not hidden while a run continues
 
     # Built by run_simple_page and run_prompt_bar.
     _activity: QPlainTextEdit
@@ -1131,3 +1132,4 @@ class RunWindow(QMainWindow):
             self._session.close()
         self._diagnose.close_session()
         super().closeEvent(event)
+        self.closed.emit()

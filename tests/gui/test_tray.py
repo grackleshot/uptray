@@ -384,6 +384,7 @@ def test_open_run_window_starts_new_run_after_finished(
         def __init__(self, *_args: object, **_kwargs: object) -> None:
             self.is_active = False
             self.monitor_status_changed = type("S", (), {"connect": lambda *_a: None})()
+            self.closed = type("S", (), {"connect": lambda *_a: None})()
             created.append(self)
 
         def isVisible(self) -> bool:  # noqa: N802
@@ -410,15 +411,8 @@ def test_open_run_window_starts_new_run_after_finished(
     assert len(created) == 2
 
 
-def test_replaced_run_window_is_destroyed_with_its_web_views(
-    tray: Tray,
-    monkeypatch: pytest.MonkeyPatch,
-    qtbot,  # noqa: ANN001
-    tmp_path: Path,
-) -> None:
-    """Signal connections keep a closed window alive; each leaked one kept two renderers."""
-    from PySide6.QtCore import QCoreApplication, QEvent
-
+def _use_real_run_windows(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Make the tray open real run windows that run a short script instead of topgrade."""
     from uptray.gui.run_window import RunWindow
 
     script = tmp_path / "done.sh"
@@ -430,25 +424,103 @@ def test_replaced_run_window_is_destroyed_with_its_web_views(
         ),
     )
     monkeypatch.setattr("uptray.gui.tray.is_online", lambda: False)
+
+
+def _destroyed_count(*objects: object) -> list[bool]:
+    destroyed: list[bool] = []
+    for obj in objects:
+        obj.destroyed.connect(lambda *_: destroyed.append(True))  # type: ignore[attr-defined]
+    return destroyed
+
+
+def _flush_deletes() -> None:
+    from PySide6.QtCore import QCoreApplication, QEvent
+
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+
+def test_replaced_run_window_is_destroyed_with_its_web_views(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+    qtbot,  # noqa: ANN001
+    tmp_path: Path,
+) -> None:
+    """Qt holds lambdas that capture the window; each leaked one kept two renderers."""
+    from uptray.gui.terminal_widget import webengine_available
+
+    _use_real_run_windows(monkeypatch, tmp_path)
     tray._open_run_window([])
     first = tray._run_window
     assert first is not None
     qtbot.waitUntil(lambda: not first.is_active, timeout=5000)
-    destroyed: list[bool] = []
-    first.destroyed.connect(lambda *_: destroyed.append(True))
+    views: list[object] = []
+    if webengine_available():
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+
+        views = list(first.findChildren(QWebEngineView))
+        assert views
+    destroyed = _destroyed_count(first, *views)
 
     tray._open_run_window([])
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    _flush_deletes()
 
     assert tray._run_window is not first
+    assert len(destroyed) == 1 + len(views)
+
+
+def test_closing_a_finished_run_window_frees_it_without_another_run(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+    qtbot,  # noqa: ANN001
+    tmp_path: Path,
+) -> None:
+    _use_real_run_windows(monkeypatch, tmp_path)
+    tray._open_run_window([])
+    window = tray._run_window
+    assert window is not None
+    qtbot.waitUntil(lambda: not window.is_active, timeout=5000)
+    destroyed = _destroyed_count(window)
+
+    window.close()
+    _flush_deletes()
+
     assert destroyed
+    assert tray._run_window is None
 
 
+def test_run_for_real_replaces_the_preview_from_its_own_button(
+    tray: Tray,
+    monkeypatch: pytest.MonkeyPatch,
+    qtbot,  # noqa: ANN001
+    tmp_path: Path,
+) -> None:
+    """The preview's own click handler starts the run that deletes the preview."""
+    _use_real_run_windows(monkeypatch, tmp_path)
+    tray._preview_topgrade()
+    preview = tray._run_window
+    assert preview is not None
+    qtbot.waitUntil(lambda: preview._btn_run_real.isVisible(), timeout=5000)
+    destroyed = _destroyed_count(preview)
+
+    preview._btn_run_real.click()
+    _flush_deletes()
+
+    run = tray._run_window
+    assert destroyed
+    assert run is not None and run is not preview
+    assert run._scope == "Full update"
+    qtbot.waitUntil(lambda: not run.is_active, timeout=5000)
+    assert run._returncode == 0
+
+
+@pytest.mark.parametrize("apply_fails", [False, True])
 def test_closed_settings_dialog_is_destroyed(
     tray: Tray,
     monkeypatch: pytest.MonkeyPatch,
+    apply_fails: bool,
 ) -> None:
-    from PySide6.QtCore import QCoreApplication, QEvent
+    import gc
+
     from PySide6.QtWidgets import QDialog
 
     from uptray.gui.settings import SettingsDialog
@@ -457,11 +529,21 @@ def test_closed_settings_dialog_is_destroyed(
 
     def exec_and_watch(dialog: SettingsDialog) -> int:
         dialog.destroyed.connect(lambda *_: destroyed.append(True))
-        return QDialog.DialogCode.Rejected.value
+        return QDialog.DialogCode.Accepted.value
+
+    def fail(_cfg: object) -> None:
+        raise RuntimeError("could not save")
 
     monkeypatch.setattr(SettingsDialog, "exec", exec_and_watch)
-    tray._open_settings()
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    monkeypatch.setattr("uptray.gui.tray.save_config", lambda _cfg: None)
+    if apply_fails:
+        monkeypatch.setattr(tray, "_apply_config", fail)
+        with pytest.raises(RuntimeError):
+            tray._open_settings()
+    else:
+        tray._open_settings()
+    gc.collect()
+    _flush_deletes()
 
     assert destroyed
 
@@ -513,6 +595,7 @@ def test_active_run_is_visible_and_all_launch_actions_refocus_it(
         def shutdown(self) -> None: ...
 
         monitor_status_changed = Signal(str)
+        closed = Signal()
         monitor_status = "Preparing update"
         is_active = True
 
@@ -573,6 +656,7 @@ def test_run_after_preview_preserves_scope(
 
         is_active = False
         monitor_status_changed = type("S", (), {"connect": lambda *_a: None})()
+        closed = type("S", (), {"connect": lambda *_a: None})()
 
         def __init__(
             self, *_a: object, on_run_for_real: Callable[[], None], **_kw: object

@@ -206,14 +206,18 @@ class SettingsDialog(QDialog):
         buttons.addButton(ok_button, QDialogButtonBox.ButtonRole.AcceptRole)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        # A bound method, not a lambda: Qt would hold a lambda capturing self, and so the dialog.
         buttons.button(QDialogButtonBox.StandardButton.RestoreDefaults).clicked.connect(
-            lambda: self._populate(Config())
+            self._restore_defaults
         )
         root.addWidget(buttons)
         self._populate(cfg)
         available = self.screen().availableGeometry().height()
         wanted = content.sizeHint().height() + buttons.sizeHint().height() + 60
         self.resize(max(540, content.sizeHint().width() + 48), min(wanted, int(available * 0.9)))
+
+    def _restore_defaults(self) -> None:
+        self._populate(Config())
 
     def _populate(self, cfg: Config) -> None:
         """Fill every widget from cfg (also used by Restore Defaults)."""
