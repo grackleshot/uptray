@@ -39,12 +39,23 @@ def _parse_bounded_int(value: str, *, minimum: int, maximum: int, label: str) ->
     return parsed
 
 
+_BUILTIN_SOURCES = frozenset({"pacman", "aur", "flatpak", "firmware", "reboot"})
+
+
 def _parse_source_name(value: str) -> str:
     """Normalize a checker name passed to a source enable/disable option."""
     source = value.strip().lower()
     if not source:
         raise argparse.ArgumentTypeError("source name cannot be empty")
     return source
+
+
+def _known_sources(cfg: Config) -> set[str]:
+    """Checker names the CLI will accept for --enable-source / --disable-source."""
+    names = set(_BUILTIN_SOURCES)
+    names.update(cfg.sources)
+    names.update(custom_checker_name(command.name) for command in cfg.custom_commands)
+    return names
 
 
 def _parse_terminal(value: str) -> str:
@@ -71,6 +82,9 @@ def _apply_cli_overrides(
     conflicts = enabled_sources & disabled_sources
     if conflicts:
         parser.error(f"cannot both enable and disable source(s): {', '.join(sorted(conflicts))}")
+    unknown = sorted((enabled_sources | disabled_sources) - _known_sources(cfg))
+    if unknown:
+        parser.error(f"unknown source(s): {', '.join(unknown)}")
     for source in enabled_sources:
         cfg.sources.setdefault(source, SourceConfig()).enabled = True
     for source in disabled_sources:
@@ -359,14 +373,22 @@ def main(argv: list[str] | None = None) -> int:
         "--icon-style", choices=("default", "colorblind"),
         help="Override the tray icon palette",
     )
-    parser.add_argument(
-        "--sound", dest="notification_sound", action="store_true", default=None,
+    sound_group = parser.add_mutually_exclusive_group()
+    sound_group.add_argument(
+        "--sound",
+        dest="notification_sound",
+        action="store_const",
+        const=True,
         help="Play the notification server's default sound",
     )
-    parser.add_argument(
-        "--no-sound", dest="notification_sound", action="store_false",
-        help="Disable notification sound (default)",
+    sound_group.add_argument(
+        "--no-sound",
+        dest="notification_sound",
+        action="store_const",
+        const=False,
+        help="Disable notification sound",
     )
+    parser.set_defaults(notification_sound=None)
     args = parser.parse_args(argv)
 
     if sum((args.check, args.list, args.tray)) > 1:

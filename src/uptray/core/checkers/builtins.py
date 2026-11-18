@@ -7,16 +7,36 @@ import re
 import shutil
 from typing import ClassVar
 
+from uptray.core.logging import get_logger
 from uptray.core.models import Update, custom_checker_name
 from uptray.core.provider import UpdateChecker
 from uptray.core.subprocess import run_checked
 
+_STDOUT_TAIL_LINES = 5
+_STDOUT_TAIL_CHARS = 400
 
-def _command_error(command: list[str], returncode: int, stderr: str | None) -> RuntimeError:
-    """Build a useful error for a failed update-check command."""
+
+def _command_error(
+    command: list[str],
+    returncode: int,
+    stderr: str | None,
+    stdout: str | None = None,
+) -> RuntimeError:
+    """Build a useful error for a failed update-check command.
+
+    stderr wins when it has text. Helpers such as paru sometimes print the
+    only useful failure on stdout, so a blank stderr falls back to a short
+    tail of stdout before the bare exit status.
+    """
     detail = (stderr or "").strip()
     if not detail:
-        detail = f"exited with status {returncode}"
+        tail = (stdout or "").strip()
+        if tail:
+            detail = "\n".join(tail.splitlines()[-_STDOUT_TAIL_LINES:])
+            if len(detail) > _STDOUT_TAIL_CHARS:
+                detail = detail[-_STDOUT_TAIL_CHARS:]
+        else:
+            detail = f"exited with status {returncode}"
     return RuntimeError(f"{command[0]} {detail}")
 
 
@@ -54,7 +74,7 @@ class PacmanChecker(UpdateChecker):
         if r.returncode == 2:  # checkupdates uses 2 to mean no updates
             return []
         if r.returncode != 0:
-            raise _command_error(command, r.returncode, r.stderr)
+            raise _command_error(command, r.returncode, r.stderr, r.stdout)
         if not r.stdout.strip():
             return []
         updates: list[Update] = []
@@ -86,7 +106,7 @@ class AurChecker(UpdateChecker):
                 # output means "no updates", not an error.
                 return []
             if r.returncode != 0:
-                raise _command_error(command, r.returncode, r.stderr)
+                raise _command_error(command, r.returncode, r.stderr, r.stdout)
             if not r.stdout.strip():
                 return []
             updates: list[Update] = []
@@ -116,7 +136,7 @@ class FlatpakChecker(UpdateChecker):
         ]
         r = run_checked(command)
         if r.returncode != 0:
-            raise _command_error(command, r.returncode, r.stderr)
+            raise _command_error(command, r.returncode, r.stderr, r.stdout)
         if not r.stdout.strip():
             return []
         updates: list[Update] = []
@@ -150,8 +170,10 @@ class FirmwareChecker(UpdateChecker):
     def check(self) -> list[Update]:
         command = ["fwupdmgr", "get-updates", "--json"]
         r = run_checked(command)
-        if r.returncode != 0:
-            raise _command_error(command, r.returncode, r.stderr)
+        # fwupd uses exit 2 with {"Devices": []} for "nothing to do"
+        # (fwupd issue #2572). That is a successful empty check.
+        if r.returncode not in (0, 2):
+            raise _command_error(command, r.returncode, r.stderr, r.stdout)
         return _parse_fwupd_output(r.stdout)
 
 
@@ -263,12 +285,15 @@ class CustomCommandChecker(UpdateChecker):
     def check(self) -> list[Update]:
         r = run_checked(self._command)
         if r.returncode != 0:
-            raise _command_error(self._command, r.returncode, r.stderr)
+            raise _command_error(self._command, r.returncode, r.stderr, r.stdout)
         if not r.stdout.strip():
             return []
         updates: list[Update] = []
+        log = get_logger("checkers")
         for line in r.stdout.strip().splitlines():
             up = _parse_checkupdates_line(line, self.name)
             if up:
                 updates.append(up)
+            elif line.strip():
+                log.debug("Ignoring unparsable %s output: %s", self.name, line.strip())
         return updates

@@ -121,6 +121,23 @@ def test_tray_config_error_sends_notification(monkeypatch, capsys) -> None:
     assert sent == []
 
 
+def test_cmd_check_reboot_with_a_package_checker_is_up_to_date(monkeypatch, capsys) -> None:
+    results = [
+        CheckResult(source="pacman", updates=[]),
+        CheckResult(
+            source="reboot", updates=[Update("kernel", "", "reboot required", "reboot")]
+        ),
+    ]
+    monkeypatch.setattr(cli, "check_all", lambda _cfg: results)
+
+    code = cli.cmd_check(Config())
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Reboot required." in out
+    assert "System is up to date." in out
+
+
 @pytest.mark.parametrize("mode", ["--check", "--list", "--json"])
 def test_reboot_only_reports_missing_package_coverage(monkeypatch, capsys, mode) -> None:
     reboot = CheckResult(
@@ -144,3 +161,18 @@ def test_reboot_only_reports_missing_package_coverage(monkeypatch, capsys, mode)
     else:
         assert "Reboot required." in out
         assert "up to date" not in out
+
+
+def test_cli_rejects_unknown_source(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "setup_logging", lambda **_kwargs: None)
+    monkeypatch.setattr(cli, "load_config", lambda: Config())
+
+    with pytest.raises(SystemExit, match="2"):
+        cli.main(["--list", "--enable-source", "nonexistent"])
+
+
+def test_cli_rejects_conflicting_sound_flags(monkeypatch) -> None:
+    monkeypatch.setattr(cli, "setup_logging", lambda **_kwargs: None)
+
+    with pytest.raises(SystemExit, match="2"):
+        cli.main(["--check", "--sound", "--no-sound"])

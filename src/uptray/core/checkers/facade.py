@@ -30,8 +30,10 @@ def _get_engine() -> UpdateEngine:
 
 
 def _get_topgrade_disabled_checkers() -> set[str]:
-    """Return checker names disabled by topgrade.toml."""
+    """Return checker names disabled by topgrade.toml and topgrade.d/."""
     try:
+        # No explicit path: drop-ins merge first, then the main file, including
+        # when only topgrade.d/ exists.
         topgrade_cfg = load_topgrade_config()
     except (OSError, ValueError) as exc:
         get_logger("checkers").warning("Could not read Topgrade configuration: %s", exc)
