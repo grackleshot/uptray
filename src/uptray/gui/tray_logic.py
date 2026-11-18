@@ -6,9 +6,10 @@ import contextlib
 import errno
 import fcntl
 import os
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from uptray.core.logging import get_logger
 from uptray.core.topgrade_session import private_runtime_dir
@@ -23,16 +24,39 @@ OFFLINE_RETRY_MS = 60_000
 RESUME_CHECK_DELAY_MS = 10_000
 
 
+def local_zone() -> tzinfo:
+    """Return the system zone, including its daylight-saving rules when known.
+
+    ``datetime.now().astimezone()`` only carries today's fixed offset. Using
+    that offset for tomorrow's midnight is an hour off on a transition day.
+    """
+    configured = os.environ.get("TZ")
+    if configured:
+        key = configured[1:] if configured.startswith(":") else configured
+        with contextlib.suppress(ZoneInfoNotFoundError, ValueError):
+            return ZoneInfo(key)
+    try:
+        target = Path("/etc/localtime").resolve()
+    except OSError:
+        target = None
+    root = Path("/usr/share/zoneinfo")
+    if target is not None and root in target.parents:
+        with contextlib.suppress(ZoneInfoNotFoundError, ValueError):
+            return ZoneInfo(target.relative_to(root).as_posix())
+    return datetime.now().astimezone().tzinfo or timezone.utc
+
+
 def local_now() -> datetime:
     """Return the current local time with its timezone attached."""
-    return datetime.now().astimezone()
+    return datetime.now(local_zone())
 
 
 def as_local(value: datetime) -> datetime:
     """Interpret a naive timestamp as local time and convert to that zone."""
+    zone = local_zone()
     if value.tzinfo is None:
-        return value.astimezone()
-    return value.astimezone()
+        return value.replace(tzinfo=zone)
+    return value.astimezone(zone)
 
 
 def next_local_midnight(now: datetime | None = None) -> datetime:

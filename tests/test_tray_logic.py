@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from uptray.gui.tray_logic import is_snoozed, next_local_midnight, snooze_label
 
@@ -36,3 +37,18 @@ def test_next_local_midnight_is_tomorrow() -> None:
     assert midnight.hour == 0
     assert midnight.minute == 0
     assert midnight.tzinfo is not None
+
+
+def test_next_local_midnight_follows_daylight_saving_rules(monkeypatch) -> None:  # noqa: ANN001
+    zone = ZoneInfo("America/Los_Angeles")
+    monkeypatch.setattr("uptray.gui.tray_logic.local_zone", lambda: zone)
+
+    spring = datetime(2026, 3, 8, 1, 30, tzinfo=timezone(timedelta(hours=-8)))
+    spring_midnight = next_local_midnight(spring)
+    assert spring_midnight == datetime(2026, 3, 9, 0, 0, tzinfo=zone)
+    assert spring_midnight.utcoffset() == timedelta(hours=-7)
+
+    autumn = datetime(2026, 11, 1, 1, 30, tzinfo=timezone(timedelta(hours=-7)))
+    autumn_midnight = next_local_midnight(autumn)
+    assert autumn_midnight == datetime(2026, 11, 2, 0, 0, tzinfo=zone)
+    assert autumn_midnight.utcoffset() == timedelta(hours=-8)
