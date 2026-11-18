@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+
 import pytest
 
 
@@ -21,6 +23,26 @@ def sent_messages(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
             lambda summary, body, **_kw: sent.append((summary, body)),
         )
     return sent
+
+
+@pytest.fixture(autouse=True)
+def _delete_leftover_windows() -> Iterator[None]:
+    """Destroy each test's windows while Qt is fully alive.
+
+    Hundreds of leftover windows made PySide's exit-time cleanup crash the
+    test process after every test had passed (exit 139 or 134 on CI).
+    """
+    yield
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+    except ImportError:  # PySide6 missing: GUI tests skip themselves
+        return
+    if QApplication.instance() is None:
+        return
+    for widget in QApplication.topLevelWidgets():
+        widget.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 @pytest.fixture(scope="session", autouse=True)
