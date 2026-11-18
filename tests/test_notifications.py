@@ -253,6 +253,30 @@ def test_activation_token_does_not_swallow_the_action() -> None:
     assert not client._owns_notification(19)
 
 
+def test_real_dbus_signals_are_routed_by_their_header_member() -> None:
+    """Real jeepney messages carry the member in header.fields, not as an attribute."""
+    from jeepney import DBusAddress, new_signal
+    from jeepney.low_level import Message
+
+    address = DBusAddress(
+        "/org/freedesktop/Notifications", interface="org.freedesktop.Notifications"
+    )
+
+    def received_signal(member: str, body: tuple[object, ...]) -> Message:
+        sent = new_signal(address, member, "us", body)
+        return Message.from_buffer(sent.serialise(serial=1))
+
+    client = NotificationClient()
+    received: list[str] = []
+    client._action_handler = received.append
+    client._note_notification(19)
+
+    client._handle_notification_signal(received_signal("ActivationToken", (19, "token")))
+    client._handle_notification_signal(received_signal("ActionInvoked", (19, "snooze")))
+
+    assert received == ["snooze"]
+
+
 def test_plain_message_does_not_replace_the_update_notification() -> None:
     client, _bus, calls = _make_dbus_client()
 
