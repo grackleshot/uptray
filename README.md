@@ -25,13 +25,13 @@ existing topgrade setup when you choose to update.
 - **Arch news**: reads the [archlinux.org news feed](https://archlinux.org/feeds/news/), flags items published since you last read the news, and opens them from the tray menu
 - **Event-driven checks**: re-checks shortly after the pacman database changes (someone ran an upgrade), after resume from suspend, and skips checks while offline
 - **Post-update maintenance reminders**: orphan packages, unmerged `.pacnew`/`.pacsave` files, oversized package cache — surfaced once per day after an update session ends
-- **Update history**: the History window has a System log tab (recent upgrade sessions parsed from `/var/log/pacman.log`) and a Runs tab (past runs started from the app)
+- **Update history** shows pacman transactions in **System log** and monitored sessions in **Runs**. New runs record their scope, exit status, duration, and whether you cancelled. Earlier logs with an uncertain outcome are marked **Unconfirmed**.
 - **Dry-run preview**: launches `topgrade --dry-run` from the tray or dialog; when the preview succeeds, a **Run for real** button starts the actual update
-- **In-app run window**: Simple and Verbose views, step checklist, and a prompt bar that surfaces questions from the running command, including answers you type (pacdiff menus, pacman "Enter a number")
+- **In-app run window** shows the active step, elapsed time, and recent output in Simple view. A pending question brings the decision and its actions into view. Switch to Verbose to use the same live terminal.
 - **KDE task manager progress**: when the current update operation reports a percentage, the run window and the `uptray.desktop` task icon show it live. The overlay clears between operations with unknown progress and when the run ends; it is not an overall topgrade completion estimate. Plasma must have task progress indicators enabled.
 - **Resizable verbose output**: the terminal reports its actual size to update commands; the plain-text fallback keeps long lines horizontally scrollable and handles in-place progress redraws. The step sidebar can be narrowed or collapsed to give output more room.
-- **Keeps running when closed**: closing the run window mid-update hides it instead of stopping the update; choose Run Topgrade in the tray to bring it back, and Cancel asks before stopping
-- **Update only this source**: right-click a source in the Updates dialog to run topgrade for just that step
+- **Background runs** continue when you close the window. Choose **Open current run** in the tray to return to it. The tray shows when a run needs an answer and verifies the available updates after the run ends.
+- **Source-specific updates** are available from the button below the package list or a source’s context menu. Select a source or package to see the action. Pacman and AUR share the system step. The action passes `--only STEP` to Topgrade, which also honors steps in your configured `misc.only` list.
 - **Topgrade integration**: respects your `topgrade.toml` (including `misc.disable`, `misc.only`, and `topgrade.d/` drop-ins), launches in your preferred terminal
 - **Package navigation**: double-click a package in the dialog or click it in the tray menu to open its upstream page
 - **Settings dialog**: edit interval (in minutes), sources including firmware and reboot, quiet hours, terminals, icons, and the autostart toggle without touching TOML; Restore Defaults resets the form
@@ -193,8 +193,12 @@ Exit codes:
 | --- | --- |
 | 0 | success / system is up to date |
 | 1 | updates are available (`--check`), or topgrade/tray/GUI is unavailable |
-| 2 | errors, or the check was incomplete |
+| 2 | errors, an incomplete check, or no package sources checked (including a reboot-only check) |
 | 3 | the tray applet is already running |
+
+`--list --json` includes `package_sources_checked` for every package source
+attempted, including those with zero updates. Checker errors appear under
+`sources`, and the reboot probe is reported separately from the package total.
 
 ### Keyboard shortcuts
 
