@@ -27,6 +27,7 @@ def test_flatpak_uses_flathub_page() -> None:
 def test_published_flatpak_runtime_keeps_its_page() -> None:
     assert not flatpak_ref_is_unpublished("org.gnome.Platform")
     assert not flatpak_ref_is_unpublished("org.freedesktop.Platform.GL.default")
+    assert not flatpak_ref_is_unpublished("org.freedesktop.Platform.GL32.default")
     assert (
         upstream_url("org.gnome.Platform", "flatpak")
         == "https://flathub.org/apps/org.gnome.Platform"
@@ -45,6 +46,10 @@ def test_unpublished_flatpak_ref_has_no_link() -> None:
         "org.freedesktop.Sdk.Docs",
         "org.freedesktop.Platform.GL.GLES",
         "org.gnome.Platform.Var",
+        # Driver builds: common on NVIDIA systems, and all 404 on Flathub.
+        "org.freedesktop.Platform.GL.nvidia-550-78",
+        "org.freedesktop.Platform.GL32.nvidia-550-78",
+        "org.freedesktop.Platform.GL.mesa-git",
     ):
         assert flatpak_ref_is_unpublished(name)
         assert upstream_url(name, "flatpak") == ""

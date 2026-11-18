@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from itertools import pairwise
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -25,7 +26,12 @@ _UNPUBLISHED_FLATPAK_PARTS = frozenset(
 
 def flatpak_ref_is_unpublished(name: str) -> bool:
     """Return True when Flathub has no /apps/ page for this Flatpak ref."""
-    return any(part in _UNPUBLISHED_FLATPAK_PARTS for part in name.split("."))
+    parts = name.split(".")
+    # Only the default GL drivers have pages; driver builds (GL.nvidia-550-78,
+    # GL32.mesa-git) do not.
+    return any(part in _UNPUBLISHED_FLATPAK_PARTS for part in parts) or any(
+        gl in {"GL", "GL32"} and variant != "default" for gl, variant in pairwise(parts)
+    )
 
 
 def upstream_url(name: str, source: str, runner: Runner | None = None) -> str:
