@@ -377,7 +377,13 @@ class Tray(QSystemTrayIcon):
         ):
             self._send_update_notification(results)
 
-        self._maybe_maintenance_reminder(previous_package_total, package_total, results)
+        self._maybe_maintenance_reminder(
+            previous_package_total,
+            package_total,
+            results,
+            snoozed=snoozed,
+            quiet=quiet,
+        )
 
         self._persist_state()
         self._build_menu()
@@ -415,7 +421,7 @@ class Tray(QSystemTrayIcon):
             and not snoozed
             and not quiet
         ):
-            send_message(
+            self._send_message(
                 "Reboot required",
                 "A kernel or system update needs a reboot to take effect.",
                 urgency="critical",
@@ -428,11 +434,21 @@ class Tray(QSystemTrayIcon):
         previous_total: int,
         total: int,
         results: list[CheckResult],
+        *,
+        snoozed: bool,
+        quiet: bool,
     ) -> None:
-        """After an update session ends (N -> 0), remind once per day."""
+        """After an update session ends (N -> 0), remind once per day.
+
+        Notifications that are disabled, snoozed, or inside quiet hours keep
+        the reminder pending so it is sent on a later check instead of dropped.
+        """
+        self._flush_maintenance_reminder(snoozed=snoozed, quiet=quiet)
         if previous_total <= 0 or total != 0 or not results:
             return
         if any(result.error is not None for result in results):
+            return
+        if self._state.maintenance_pending:
             return
         if self._state.maintenance_check_date == date.today().isoformat():
             return
@@ -441,15 +457,48 @@ class Tray(QSystemTrayIcon):
         except Exception:
             get_logger("tray").exception("Maintenance check failed")
             return
+        if not findings:
+            self._state.maintenance_check_date = date.today().isoformat()
+            return
+        self._state.maintenance_pending = True
+        self._state.maintenance_body = "\n".join(
+            f"• {finding.summary}" for finding in findings
+        )
+        self._flush_maintenance_reminder(snoozed=snoozed, quiet=quiet)
+
+    def _flush_maintenance_reminder(self, *, snoozed: bool, quiet: bool) -> None:
+        """Send a deferred maintenance reminder when notifications are allowed."""
+        body = self._state.maintenance_body
+        if not self._state.maintenance_pending or not body:
+            return
+        if not self._cfg.notifications.enabled or snoozed or quiet:
+            return
+        self._send_message(
+            "Post-update maintenance",
+            body,
+            urgency="normal",
+            sound=self._cfg.notifications.sound,
+        )
+        self._state.maintenance_pending = False
+        self._state.maintenance_body = None
         self._state.maintenance_check_date = date.today().isoformat()
-        if findings:
-            body = "\n".join(f"• {finding.summary}" for finding in findings)
-            send_message(
-                "Post-update maintenance",
-                body,
-                urgency="normal",
-                sound=self._cfg.notifications.sound,
-            )
+
+    def _send_message(
+        self,
+        summary: str,
+        body: str,
+        *,
+        urgency: str | None = None,
+        sound: bool = False,
+    ) -> None:
+        """Notify through the tray's long-lived client."""
+        send_message(
+            summary,
+            body,
+            urgency=urgency,
+            sound=sound,
+            client=self._notification_client,
+        )
 
     def _is_news_new(self, item: NewsItem) -> bool:
         """Match the feed-level rule: with no read marker nothing is new."""
@@ -624,9 +673,11 @@ class Tray(QSystemTrayIcon):
         reboot_pending = is_reboot_pending(self._updates_by_source())
         if not (total_updates(self._results) or has_errors or reboot_pending):
             if not self._results:
-                send_message("No update checkers", "No supported update source is available.")
+                self._send_message(
+                    "No update checkers", "No supported update source is available."
+                )
             else:
-                send_message("No updates", "Your system is up to date.")
+                self._send_message("No updates", "Your system is up to date.")
             return
         dlg = UpdatesDialog(self._results)
         dlg.set_on_run(self._run_topgrade)
@@ -645,14 +696,14 @@ class Tray(QSystemTrayIcon):
         try:
             findings = maintenance_summary()
         except Exception as exc:
-            send_message("Maintenance check failed", str(exc))
+            self._send_message("Maintenance check failed", str(exc))
             return
         if findings:
             self._state.maintenance_check_date = date.today().isoformat()
             self._persist_state()
             MaintenanceDialog(findings).exec()
         else:
-            send_message("No maintenance needed", "Your system looks clean.")
+            self._send_message("No maintenance needed", "Your system looks clean.")
 
     def _open_settings(self) -> None:
         # Reload so a run-window mode toggle (or other writer) is not overwritten.

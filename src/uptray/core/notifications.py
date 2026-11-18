@@ -36,6 +36,8 @@ class NotificationClient:
         self._action_listener_thread: Thread | None = None
         self._action_listener_available = False
         self._last_id = 0  # replaces_id so each notification replaces the previous one
+        self._owned_ids: set[int] = set()
+        self._owned_lock = Lock()
         try:
             from jeepney import DBusAddress, MatchRule, new_method_call
             from jeepney.bus_messages import message_bus
@@ -95,11 +97,11 @@ class NotificationClient:
             if self._MatchRule is None or self._message_bus is None:
                 return
             bus = self._open_dbus_connection()
+            # No member filter: ActionInvoked and NotificationClosed share this path.
             rule = self._MatchRule(
                 type="signal",
                 sender="org.freedesktop.Notifications",
                 interface="org.freedesktop.Notifications",
-                member="ActionInvoked",
                 path="/org/freedesktop/Notifications",
             )
             bus.send_and_get_reply(self._message_bus.AddMatch(rule), timeout=3)
@@ -111,8 +113,7 @@ class NotificationClient:
                         message = bus.recv_until_filtered(matches, timeout=0.25)
                     except TimeoutError:
                         continue
-                    if len(message.body) >= 2:
-                        self._dispatch_action(str(message.body[1]))
+                    self._handle_notification_signal(getattr(message, "body", ()))
         except Exception as exc:
             get_logger("notifications").warning("Notification actions unavailable: %s", exc)
             self._action_listener_available = False
@@ -121,6 +122,36 @@ class NotificationClient:
             if bus is not None:
                 with contextlib.suppress(Exception):
                     bus.close()
+
+    def _handle_notification_signal(self, body: object) -> None:
+        """Dispatch our own actions and forget ids that have closed."""
+        if not isinstance(body, (list, tuple)) or not body:
+            return
+        try:
+            notification_id = int(body[0])
+        except (TypeError, ValueError):
+            return
+        # ActionInvoked is (id, action key). NotificationClosed is (id, reason).
+        if len(body) >= 2 and isinstance(body[1], str):
+            if self._owns_notification(notification_id):
+                self._forget_notification(notification_id)
+                self._dispatch_action(body[1])
+            return
+        self._forget_notification(notification_id)
+
+    def _owns_notification(self, notification_id: int) -> bool:
+        with self._owned_lock:
+            return notification_id in self._owned_ids
+
+    def _note_notification(self, notification_id: int, *, replaces: int = 0) -> None:
+        with self._owned_lock:
+            if replaces:
+                self._owned_ids.discard(replaces)
+            self._owned_ids.add(notification_id)
+
+    def _forget_notification(self, notification_id: int) -> None:
+        with self._owned_lock:
+            self._owned_ids.discard(notification_id)
 
     def _dispatch_action(self, action_id: str) -> None:
         """Call the current action handler without letting it kill the listener."""
@@ -219,7 +250,9 @@ class NotificationClient:
             reply = self._bus.send_and_get_reply(msg, timeout=5)
             reply_body = getattr(reply, "body", ())
             if reply_body:
+                previous = self._last_id
                 self._last_id = int(reply_body[0])
+                self._note_notification(self._last_id, replaces=previous)
                 return self._last_id
             return None
         except Exception:
@@ -252,8 +285,8 @@ class NotificationClient:
         if sound:
             command.extend(["-h", "string:sound-name:message"])
         command.extend([summary, body])
-        with contextlib.suppress(FileNotFoundError):
-            subprocess.Popen(command)
+        with contextlib.suppress(FileNotFoundError, subprocess.TimeoutExpired):
+            subprocess.run(command, check=False, timeout=5)
 
     def close(self, notification_id: int) -> None:
         """Close a notification by ID."""
@@ -263,6 +296,7 @@ class NotificationClient:
         proxy = self._proxy
         if bus is None or proxy is None:
             return
+        self._forget_notification(notification_id)
         try:
             msg = self._new_method_call(
                 proxy,
@@ -330,15 +364,20 @@ def send_notification(
     notification_summary = summary or f"{total} update(s) available"
     notification_body = body or format_source_counts(results)
 
+    owns_client = client is None
     notification_client = client or NotificationClient()
-    return notification_client.notify(
-        notification_summary,
-        notification_body,
-        actions,
-        on_action=on_action,
-        urgency=urgency,
-        sound=sound,
-    )
+    try:
+        return notification_client.notify(
+            notification_summary,
+            notification_body,
+            actions,
+            on_action=on_action,
+            urgency=urgency,
+            sound=sound,
+        )
+    finally:
+        if owns_client:
+            notification_client.shutdown()
 
 
 def send_message(
@@ -347,6 +386,17 @@ def send_message(
     *,
     urgency: str | None = None,
     sound: bool = False,
+    client: NotificationClient | None = None,
 ) -> int | None:
-    """Send a desktop notification without requiring update results."""
-    return NotificationClient().notify(summary, body, urgency=urgency, sound=sound)
+    """Send a desktop notification without requiring update results.
+
+    A caller that already owns a client (the tray applet) should pass it so
+    the bus connection is reused. Otherwise the temporary client is closed.
+    """
+    owns_client = client is None
+    notification_client = client or NotificationClient()
+    try:
+        return notification_client.notify(summary, body, urgency=urgency, sound=sound)
+    finally:
+        if owns_client:
+            notification_client.shutdown()

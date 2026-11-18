@@ -27,6 +27,8 @@ def test_save_and_load_roundtrip(tmp_path) -> None:  # noqa: ANN001
         last_seen_news="2026-11-01",
         reboot_notified=True,
         maintenance_check_date="2026-11-05",
+        maintenance_pending=True,
+        maintenance_body="• 2 orphan package(s)",
     )
 
     save_state(state, path)
