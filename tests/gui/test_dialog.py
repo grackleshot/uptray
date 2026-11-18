@@ -248,3 +248,42 @@ def test_updates_title(total: int, error: str | None, expected: str) -> None:
     from uptray.gui.dialog import _updates_title
 
     assert _updates_title(total, [CheckResult(source="pacman", error=error)]) == expected
+
+
+def test_run_log_opens_at_the_failure_and_finds_text(qapp, tmp_path) -> None:  # noqa: ANN001
+    from uptray.core.run_metadata import RunMetadata, metadata_path, save_metadata
+    from uptray.gui.dialog import ReviewLogDialog
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    log = runs / "20261117T120000Z-1-1.log"
+    log.write_text(
+        "── System update ──\n" + "checking boom-free package\n" * 300
+        + "── Flatpak ──\nFlatpak failed: boom\nlater boom\n",
+        encoding="utf-8",
+    )
+    now = datetime.now(timezone.utc)
+    save_metadata(metadata_path(log), RunMetadata(
+        path=log, scope="Full update", started=now, finished=now, returncode=1,
+        cancelled=False, transcript_incomplete=False, failed_steps=("Flatpak",),
+    ))
+    dialog = ReviewLogDialog(None, runs_dir=runs)
+    dialog.show()
+    panel = dialog._panel
+
+    assert panel._text.textCursor().selectedText() == "Flatpak failed:"
+
+    shortcut = panel.findChild(QShortcut)
+    assert shortcut is not None
+    assert shortcut.key() == QKeySequence(QKeySequence.StandardKey.Find)
+    shortcut.activated.emit()
+    assert dialog.focusWidget() is panel._find
+    QTest.keyClicks(panel._find, "later boom")
+    assert panel._text.textCursor().selectedText() == "later boom"
+    panel._find.setText("boom")
+    first = panel._text.textCursor().position()
+    QTest.keyClick(panel._find, Qt.Key.Key_Return)
+    assert panel._text.textCursor().selectedText() == "boom"
+    assert panel._text.textCursor().position() != first
+    assert dialog.isVisible()  # Return searches again instead of closing the dialog
+    dialog.close()

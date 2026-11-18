@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from uptray.core.config import save_run_mode
 from uptray.core.logging import get_logger
 from uptray.core.notifications import send_message
+from uptray.core.run_history import prune_runs
 from uptray.core.run_metadata import describe_run_scope
 from uptray.core.topgrade_session import (
     AskpassExpired,
@@ -675,20 +676,30 @@ class RunWindow(QMainWindow):
             text = f"{event.name} completed"
         elif event.status in {"skipped", "ended"}:
             text = f"{event.name} {event.status}"
+        elif event.status == "failed":
+            text = f"{event.name} failed" + (f": {event.reason}" if event.reason else "")
         else:
             text = event.reason or event.latest_line
         if not text:
             return
         text = _bounded(text, _ACTIVITY_CHARS)
+        latest = next((line for _, step, line in self._activity_lines if step == event.name), None)
+        if text == latest:  # also the Summary repeating a failure already shown
+            return
         if self._activity_lines:
             _, step, previous = self._activity_lines[0]
-            if step == event.name:
-                if text == previous:
-                    return
-                if _PERCENTAGE.search(text) and (
-                    _PERCENTAGE.sub("%", text) == _PERCENTAGE.sub("%", previous)
-                ):
-                    self._activity_lines.popleft()
+            # A failure report grows a line at a time: keep only its latest form.
+            growing_failure = event.status == "failed" and prior is not None and (
+                prior.status == "failed"
+            )
+            if step == event.name and (
+                growing_failure
+                or (
+                    _PERCENTAGE.search(text)
+                    and _PERCENTAGE.sub("%", text) == _PERCENTAGE.sub("%", previous)
+                )
+            ):
+                self._activity_lines.popleft()
         if self._started_at is not None:
             self._update_elapsed()
         self._activity_lines.appendleft((_format_elapsed(self._elapsed), event.name, text))
@@ -844,6 +855,9 @@ class RunWindow(QMainWindow):
         elif isinstance(decision, PromptRequest):
             if decision.free_text:
                 self._prompt_input.setFocus()
+            elif "[Y/n]" in decision.question:
+                # Enter answers with the capitalised default, as it does in a terminal.
+                self._btn_prompt_yes.setFocus()
             else:
                 self._btn_prompt_no.setFocus()
 
@@ -984,6 +998,7 @@ class RunWindow(QMainWindow):
         self._prompt_input.clear()
         self._sweep_open_steps()
         self._set_stopped_controls()
+        prune_runs(self._runs_dir)
         if event.transcript_incomplete and not self._transcript_incomplete:
             self._show_run_warning("Transcript is incomplete. Verbose still has the live output.")
 

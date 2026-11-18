@@ -25,7 +25,7 @@ existing topgrade setup when you choose to update.
 - **Arch news**: reads the [archlinux.org news feed](https://archlinux.org/feeds/news/), flags items published since you last read the news, and opens them from the tray menu
 - **Event-driven checks**: re-checks shortly after the pacman database changes (someone ran an upgrade), after resume from suspend, and skips checks while offline
 - **Post-update maintenance reminders**: orphan packages, unmerged `.pacnew`/`.pacsave` files, oversized package cache — surfaced once per day after an update session ends
-- **Update history** shows pacman transactions in **System log** and monitored sessions in **Runs**. New runs record their scope, exit status, duration, and whether you cancelled. Earlier logs with an uncertain outcome are marked **Unconfirmed**.
+- **Update history** shows pacman transactions in **System log** and monitored sessions in **Runs**. New runs record their scope, exit status, duration, and whether you cancelled. Earlier logs with an uncertain outcome are marked **Unconfirmed**. A failed run opens at its error, and only the newest 50 runs are kept.
 - **Dry-run preview**: launches `topgrade --dry-run` from the tray or dialog; when the preview succeeds, a **Run for real** button starts the actual update
 - **In-app run window** shows the active step, elapsed time, and recent output in Simple view. A pending question brings the decision and its actions into view. Switch to Verbose to use the same live terminal.
 - **KDE task manager progress**: when the current update operation reports a percentage, the run window and the `uptray.desktop` task icon show it live. The overlay clears between operations with unknown progress and when the run ends; it is not an overall topgrade completion estimate. Plasma must have task progress indicators enabled.
@@ -207,6 +207,7 @@ attempted, including those with zero updates. Checker errors appear under
 | Esc | Run window | Close a finished run (never mid-run) |
 | Ctrl+1 / Ctrl+2 | Run window | Switch to Simple / Verbose view |
 | Ctrl+F | Updates dialog | Focus the package filter |
+| Ctrl+F | Run logs | Find in the log; Enter jumps to the next match |
 
 ### Configuration
 

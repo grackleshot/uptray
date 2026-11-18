@@ -37,6 +37,7 @@ from PySide6.QtWidgets import (
 from uptray.core.checkers import has_package_sources
 from uptray.core.links import upstream_url
 from uptray.core.run_history import RunSummary, list_runs
+from uptray.core.run_metadata import describe_run_scope
 from uptray.core.topgrade_config import ONLY_STEP_FOR_SOURCE
 from uptray.core.topgrade_session import default_runs_dir, strip_ansi
 from uptray.gui.icons import ICON_MD, ICON_SM, status_pixmap
@@ -142,12 +143,6 @@ def _updates_title(total: int, results: list[CheckResult]) -> str:
     if not has_package_sources(results):
         return "No package sources checked"
     return "No updates available"
-
-
-def _source_action_label(step: str) -> str:
-    if step == "system":
-        return "Update system packages (pacman + AUR)"
-    return f"Update {step.capitalize()}"
 
 
 class UpdatesDialog(QDialog):
@@ -303,7 +298,7 @@ class UpdatesDialog(QDialog):
         if step is None or self._on_run_only is None:
             return
         menu = QMenu(self)
-        action = menu.addAction(_source_action_label(step))
+        action = menu.addAction(describe_run_scope(["--only", step]))
         action.triggered.connect(lambda: self._run_only(step))
         menu.exec(self._tree.viewport().mapToGlobal(pos))
 
@@ -317,7 +312,9 @@ class UpdatesDialog(QDialog):
 
     def _sync_source_action(self) -> None:
         step = self._step_for_item(self._tree.currentItem())
-        self._btn_source.setText(_source_action_label(step) if step else "Update selected source")
+        self._btn_source.setText(
+            describe_run_scope(["--only", step]) if step else "Update selected source"
+        )
         self._btn_source.setToolTip(
             f"Run topgrade --only {step}. Steps in your Topgrade misc.only list also run."
             if step else "Select a package or source with a corresponding Topgrade step."
@@ -422,6 +419,7 @@ class RunLogsPanel(QWidget):
         super().__init__(parent)
         self._runs_dir = runs_dir if runs_dir is not None else default_runs_dir()
         runs = list_runs(self._runs_dir)
+        self._runs = runs
         self._paths = [run.path for run in runs]
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -438,7 +436,19 @@ class RunLogsPanel(QWidget):
         self._text = QTextEdit()
         self._text.setReadOnly(True)
         self._text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
-        body.addWidget(self._text, 3)
+        self._find = QLineEdit()
+        self._find.setPlaceholderText("Find in log… (Ctrl+F)")
+        self._find.setAccessibleName("Find in log")
+        self._find.setClearButtonEnabled(True)
+        self._find.textChanged.connect(self._find_from_start)
+        self._find.returnPressed.connect(self._find_next)
+        find_shortcut = QShortcut(QKeySequence(QKeySequence.StandardKey.Find), self)
+        find_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        find_shortcut.activated.connect(self._focus_find)
+        log_column = QVBoxLayout()
+        log_column.addWidget(self._find)
+        log_column.addWidget(self._text, 1)
+        body.addLayout(log_column, 3)
         layout.addLayout(body, 1)
 
         btn_folder = QPushButton("Open folder")
@@ -476,6 +486,31 @@ class RunLogsPanel(QWidget):
             return
         self._text.setPlainText(strip_ansi(text))
         self._text.moveCursor(QTextCursor.MoveOperation.Start)
+        for step in self._runs[row].failed_steps[:1]:
+            # Open at the failure report, or at least at its Summary row.
+            if not self._text.find(f"{step} failed:"):
+                self._text.find(f"{step}: FAILED")
+
+    def _focus_find(self) -> None:
+        self._find.setFocus()
+        self._find.selectAll()
+
+    def _find_from_start(self) -> None:
+        self._text.moveCursor(QTextCursor.MoveOperation.Start)
+        self._find_next()
+
+    def _find_next(self) -> None:
+        needle = self._find.text()
+        if needle and not self._text.find(needle):
+            self._text.moveCursor(QTextCursor.MoveOperation.Start)  # wrap around
+            self._text.find(needle)
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # Return in the find box searches again; the dialog must not take it as Close.
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and self._find.hasFocus():
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class ReviewLogDialog(QDialog):

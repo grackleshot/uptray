@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import stat
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -19,7 +20,7 @@ from uptray.core.topgrade_session import (
 if TYPE_CHECKING:
     from pathlib import Path
 
-__all__ = ["RunSummary", "list_runs", "summarize_run"]
+__all__ = ["RunSummary", "list_runs", "prune_runs", "summarize_run"]
 
 Outcome = Literal["ok", "failed", "cancelled", "incomplete"]
 _STAMP_FORMAT = "%Y%m%dT%H%M%SZ"
@@ -124,3 +125,11 @@ def list_runs(runs_dir: Path | None = None) -> list[RunSummary]:
         if legacy_count >= _MAX_RUNS:
             break
     return sorted(records, key=lambda run: run.started, reverse=True)[:_MAX_RUNS]
+
+
+def prune_runs(runs_dir: Path | None = None, keep: int = _MAX_RUNS) -> None:
+    """Delete transcripts and outcomes older than the newest runs History shows."""
+    for path in list_run_logs(runs_dir)[keep:]:
+        for stale in (path, metadata_path(path)):
+            with contextlib.suppress(OSError):
+                stale.unlink(missing_ok=True)

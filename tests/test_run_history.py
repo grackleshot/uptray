@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from uptray.core.run_history import list_runs, summarize_run
+from uptray.core.run_history import list_runs, prune_runs, summarize_run
 from uptray.core.run_metadata import describe_run_scope, metadata_path
 from uptray.core.topgrade_session import TopgradeSession
 
@@ -22,6 +22,21 @@ def _write(directory: Path, name: str, text: str) -> Path:
     path = directory / name
     path.write_text(text)
     return path
+
+
+def test_prune_runs_keeps_only_the_runs_history_can_show(tmp_path: Path) -> None:
+    logs = []
+    for i in range(53):
+        log = _write(tmp_path, f"20261117T1200{i:02d}Z-1-{i}.log", "output")
+        metadata_path(log).write_text("{}")
+        os.utime(log, (1_000 + i, 1_000 + i))
+        logs.append(log)
+
+    prune_runs(tmp_path, keep=50)
+
+    oldest, kept = logs[:3], logs[3:]
+    assert not any(log.exists() or metadata_path(log).exists() for log in oldest)
+    assert all(log.exists() and metadata_path(log).exists() for log in kept)
 
 
 def test_legacy_success_rows_do_not_confirm_process_exit(tmp_path: Path) -> None:

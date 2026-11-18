@@ -559,8 +559,57 @@ def test_simple_monitor_keeps_wrapped_activity_and_prompt_available(
     assert "see the end" in window._activity.toPlainText()
     assert window._activity.document().firstBlock().layout().lineCount() > 1
     assert window._activity.horizontalScrollBar().maximum() == 0
-    assert window._btn_prompt_no is window.focusWidget()
+    assert window._btn_prompt_yes is window.focusWidget()
     window.shutdown()
+
+
+@pytest.mark.parametrize(
+    ("question", "default"),
+    [
+        ("Proceed with installation? [Y/n]", "yes"),
+        ("Remove old packages? [y/N]", "no"),
+        ("Continue? [y/n]", "no"),
+    ],
+)
+def test_yes_no_prompt_focuses_the_answer_enter_would_give(
+    qapp,
+    qtbot,
+    tmp_path,
+    question: str,
+    default: str,  # noqa: ANN001
+) -> None:
+    from uptray.core.topgrade_session import PromptRequest
+
+    window = _running_window(qtbot, tmp_path)
+    window._on_session_event(PromptRequest(question=question))
+
+    expected = window._btn_prompt_yes if default == "yes" else window._btn_prompt_no
+    assert window.focusWidget() is expected
+    window.shutdown()
+
+
+def test_growing_failure_report_appears_once_in_activity(qapp, tmp_path) -> None:  # noqa: ANN001
+    from uptray.core.topgrade_session import _ParserState, parse_topgrade_chunk
+
+    window = RunWindow(Config(), command=_fake_command(tmp_path))
+    state = _ParserState()
+    for chunk in (
+        "── Flatpak ──\n",
+        "Flatpak failed: \n",
+        "   0: Command failed: `flatpak update -y`\n",
+        "   1: exit status: 1\n",
+        "── Summary ──\n",
+        "System update: OK\n",
+        "Flatpak: FAILED\n",
+    ):
+        for event in parse_topgrade_chunk(state, chunk):
+            window._on_session_event(event)
+
+    text = window._activity.toPlainText()
+    assert text.count("Flatpak failed") == 1
+    assert text.count("exit status: 1") == 1
+    assert "System update completed" in text
+    window.close()
 
 
 def test_run_outcome_warning_does_not_claim_transcript_is_incomplete(
