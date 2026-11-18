@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import gc
+from collections.abc import Iterator
+
 import pytest
 
 
@@ -21,6 +24,41 @@ def sent_messages(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
             lambda summary, body, **_kw: sent.append((summary, body)),
         )
     return sent
+
+
+@pytest.fixture(autouse=True)
+def _delete_leftover_qt_objects(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Stop each test's trays and destroy its windows on the GUI thread.
+
+    Leftovers crashed the test process with segfaults (exit 139). Tray threads
+    ran the garbage collector, which freed Qt objects off the GUI thread, and
+    PySide's exit cleanup failed on hundreds of windows after every test passed.
+    """
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent
+        from PySide6.QtWidgets import QApplication
+
+        from uptray.gui.tray import Tray
+    except ImportError:  # PySide6 missing: GUI tests skip themselves
+        yield
+        return
+    trays: list[Tray] = []
+    init = Tray.__init__
+
+    def tracked_init(self: Tray, *args: object, **kwargs: object) -> None:
+        init(self, *args, **kwargs)  # type: ignore[arg-type]
+        trays.append(self)
+
+    monkeypatch.setattr(Tray, "__init__", tracked_init)
+    yield
+    for tray in trays:
+        tray.shutdown()
+        tray.deleteLater()
+    if QApplication.instance() is not None:
+        for widget in QApplication.topLevelWidgets():
+            widget.deleteLater()
+        QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
 
 
 @pytest.fixture(scope="session", autouse=True)

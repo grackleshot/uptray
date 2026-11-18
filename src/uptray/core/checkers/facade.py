@@ -36,7 +36,7 @@ def _get_topgrade_disabled_checkers() -> set[str]:
         # when only topgrade.d/ exists.
         topgrade_cfg = load_topgrade_config()
     except (OSError, ValueError) as exc:
-        get_logger("checkers").warning("Could not read Topgrade config: %s", exc)
+        get_logger("checkers").warning("Could not read Topgrade configuration: %s", exc)
         return set()
     disabled_topgrade_names = get_disabled_steps(topgrade_cfg) | get_disabled_categories(
         topgrade_cfg
@@ -60,6 +60,11 @@ def check_all(cfg: Config | None = None) -> list[CheckResult]:
 def total_updates(results: list[CheckResult]) -> int:
     """Return the number of available package updates (a pending reboot is not one)."""
     return sum(len(r.updates) for r in results if r.source != "reboot")
+
+
+def has_package_sources(results: list[CheckResult]) -> bool:
+    """Whether at least one package source was checked, including failed attempts."""
+    return any(result.source != "reboot" for result in results)
 
 
 def find_terminal(cfg: Config | None = None) -> tuple[str | None, list[str]]:

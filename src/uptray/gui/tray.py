@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 from datetime import date, datetime, timedelta
+from functools import partial
 from pathlib import Path
 from threading import Event, Thread
 from typing import TYPE_CHECKING
@@ -14,12 +15,12 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-from PySide6.QtCore import QFileSystemWatcher, QThread, QTimer, Signal
+from PySide6.QtCore import QFileSystemWatcher, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QAction, QIcon
 from PySide6.QtWidgets import QApplication, QDialog, QMenu, QMessageBox, QSystemTrayIcon
 
 from uptray.core.arch_news import NewsItem, fetch_news, new_items, newest_marker
-from uptray.core.checkers import check_all, find_terminal, total_updates
+from uptray.core.checkers import check_all, find_terminal, has_package_sources, total_updates
 from uptray.core.config import load_config, save_config
 from uptray.core.history import parse_pacman_log
 from uptray.core.links import upstream_url
@@ -27,7 +28,7 @@ from uptray.core.logging import get_logger
 from uptray.core.maintenance import maintenance_summary
 from uptray.core.models import CheckResult, Config
 from uptray.core.network import is_online
-from uptray.core.notification_engine import DeferredNotification, NotificationEngine
+from uptray.core.notification_engine import NotificationEngine
 from uptray.core.notifications import (
     NotificationClient,
     format_source_counts,
@@ -71,28 +72,27 @@ APP_ID = "uptray"
 _ICON_NAME = "uptray"
 _MAX_MENU_PACKAGES = 15
 _MAX_NEWS_ITEMS = 8
+_CHECK_SHUTDOWN_TIMEOUT_MS = 10_000
 
 
 class CheckThread(QThread):
     """Background thread for non-blocking update checks and news fetches."""
 
-    result = Signal(list, object)
-
     def __init__(self, cfg: Config) -> None:
         super().__init__()
         self._cfg = cfg
+        self.results: list[CheckResult] = []
+        self.news: list[NewsItem] | None = None
 
     def run(self) -> None:
         try:
-            results = check_all(self._cfg)
+            self.results = check_all(self._cfg)
         except Exception as exc:
-            results = [CheckResult(source="update check", error=str(exc))]
-        news: list[NewsItem] | None = None
+            self.results = [CheckResult(source="update check", error=str(exc))]
         try:
-            news = fetch_news(timeout=10.0)
+            self.news = fetch_news(timeout=10.0)
         except Exception as exc:
             get_logger("tray").debug("Arch news fetch skipped: %s", exc)
-        self.result.emit(results, news)
 
 
 def launch_topgrade_in_terminal(
@@ -140,6 +140,11 @@ class Tray(QSystemTrayIcon):
         self._notification_client.start_action_listener(self.notification_action.emit)
         self._icon_cache = IconCache(cfg.tray.icon_style)
         self._check_thread: CheckThread | None = None
+        self._check_superseded = False
+        self._verifying = False
+        self._offline = False
+        self._closing = False
+        self._run_window: RunWindow | None = None
 
         # Persistent state: restore snooze and notification dedup count.
         self._state: AppState = load_state(state_path)
@@ -223,7 +228,7 @@ class Tray(QSystemTrayIcon):
         self._add_action("Check Now", "view-refresh", self._check_now)
         self._add_action("View Updates", "software-updates-available", self._show_updates)
         package_total = self._package_total()
-        if package_total > 0:
+        if package_total > 0 and not self._verifying:
             self._add_action(
                 "Preview Updates (Dry Run)", "document-print-preview", self._preview_topgrade
             )
@@ -237,6 +242,10 @@ class Tray(QSystemTrayIcon):
             self._add_news_menu()
 
         self._menu.addSeparator()
+        self._action_open_run = self._add_action(
+            "Open current run", "window-restore", self._open_current_run
+        )
+        self._action_open_run.setVisible(self._active_run() is not None)
         run_action = self._add_action("Run Topgrade", "system-run", self._run_topgrade)
         run_font = run_action.font()
         run_font.setBold(True)
@@ -258,7 +267,7 @@ class Tray(QSystemTrayIcon):
         self._menu.addSeparator()
         self._add_action("Quit", "application-exit", self._quit)
 
-    def _add_action(self, label: str, icon_name: str, slot: Callable[[], None]) -> QAction:
+    def _add_action(self, label: str, icon_name: str, slot: Callable[[], object]) -> QAction:
         """Add a menu action with a themed icon when the platform provides one."""
         action = QAction(label, self._menu)
         action.setIcon(QIcon.fromTheme(icon_name))
@@ -317,26 +326,54 @@ class Tray(QSystemTrayIcon):
     # Check lifecycle
 
     def _start_check(self, *, force: bool = False) -> None:
-        if self._is_snoozed() and not force:
-            if self._snooze_until is not None:
-                self._action_status.setText(snooze_label(self._snooze_until))
-            self._update_tooltip()
+        # A stopped thread may still have its finished signal queued on the GUI thread.
+        if self._closing or self._check_thread is not None:
+            return
+        if self._is_snoozed() and not (force or self._verifying):
+            self._update_status_surfaces()
             return
         if not is_online():
-            self._action_status.setText("Offline — waiting for network")
-            self._update_tooltip()
+            self._offline = True
             if not self._offline_retry.isActive():
                 self._offline_retry.start(OFFLINE_RETRY_MS)
+            self._update_status_surfaces()
             return
+        self._offline = False
         self._offline_retry.stop()
-        if self._check_thread is not None and self._check_thread.isRunning():
-            return
         self.setIcon(self._icon_cache.checking())
-        self.setToolTip(f"{APP_NAME} — Checking for updates…")
-        self._action_status.setText("Checking…")
         self._check_thread = CheckThread(self._cfg)
-        self._check_thread.result.connect(self._on_check_done)
+        self._check_thread.finished.connect(self._on_check_thread_finished)
+        self._update_status_surfaces()
         self._check_thread.start()
+
+    @Slot()
+    def _on_check_thread_finished(self) -> None:
+        thread = self._check_thread
+        self._check_thread = None
+        if thread is None or self._closing:
+            return
+        if self._active_run() is not None:
+            # Completion of the active run will request a fresh scan.
+            self._check_superseded = False
+            self._update_status_surfaces()
+            return
+        if self._check_superseded:
+            self._check_superseded = False
+            self._start_check()
+            return
+        self._verifying = False
+        self._on_check_done(thread.results, thread.news)
+
+    def _on_run_finished(self, _returncode: int) -> None:
+        if self._closing:
+            return
+        self._verifying = True
+        self._check_superseded = self._check_thread is not None
+        self._db_debounce.stop()
+        self.setIcon(self._icon_cache.checking())
+        self._build_menu()
+        self._update_status_surfaces()
+        self._start_check()
 
     def _on_check_done(self, results: list[CheckResult], news: object = None) -> None:
         previous_package_total = self._package_total()
@@ -347,7 +384,7 @@ class Tray(QSystemTrayIcon):
         snoozed = self._is_snoozed()
         # Always advance dedup state so restarts/disabled periods don't re-notify.
         changed = self._notification_engine.should_notify(results)
-        notify = self._cfg.notifications.enabled and not snoozed and changed
+        notifications_allowed = self._cfg.notifications.enabled and not snoozed
 
         if isinstance(news, list):
             self._news_items = [item for item in news if isinstance(item, NewsItem)]
@@ -358,31 +395,28 @@ class Tray(QSystemTrayIcon):
             self._cfg.notifications.quiet_hours_end,
         )
 
-        if quiet:
+        if quiet and notifications_allowed:
             self._notification_engine.enter_quiet_hours()
+            if changed:
+                self._notification_engine.maybe_defer(results)
         else:
             deferred = self._notification_engine.exit_quiet_hours()
-            if deferred and self._cfg.notifications.enabled and not snoozed:
-                self._send_deferred_notifications(deferred)
+            if notifications_allowed and package_total > 0:
+                if deferred:
+                    self._send_deferred_notification(results, package_total)
+                elif changed:
+                    self._send_update_notification(results)
 
         reboot_pending = is_reboot_pending(counts)
         self._handle_reboot_notification(reboot_pending, snoozed=snoozed, quiet=quiet)
 
         self._refresh_icon(package_total, reboot_pending, results)
-        if (
-            package_total > 0
-            and not snoozed
-            and notify
-            and not self._notification_engine.maybe_defer(results)
-        ):
-            self._send_update_notification(results)
-
-        self._maybe_maintenance_reminder(previous_package_total, package_total, results)
+        if notifications_allowed and not quiet:
+            self._maybe_maintenance_reminder(previous_package_total, package_total, results)
 
         self._persist_state()
         self._build_menu()
-        self._update_status_action()
-        self._update_tooltip()
+        self._update_status_surfaces()
 
     def _refresh_icon(
         self,
@@ -390,13 +424,15 @@ class Tray(QSystemTrayIcon):
         reboot_pending: bool,
         results: list[CheckResult],
     ) -> None:
-        if total > 0:
+        if self._verifying or self._check_thread is not None or self._active_run() is not None:
+            self.setIcon(self._icon_cache.checking())
+        elif total > 0:
             self.setIcon(self._icon_cache.updates(total))
         elif reboot_pending:
             self.setIcon(self._icon_cache.reboot())
         elif any(result.error is not None for result in results):
             self.setIcon(self._icon_cache.error())
-        elif not results:
+        elif not has_package_sources(results):
             self.setIcon(self._icon_cache.idle())
         else:
             self.setIcon(self._icon_cache.uptodate())
@@ -430,7 +466,7 @@ class Tray(QSystemTrayIcon):
         results: list[CheckResult],
     ) -> None:
         """After an update session ends (N -> 0), remind once per day."""
-        if previous_total <= 0 or total != 0 or not results:
+        if previous_total <= 0 or total != 0 or not has_package_sources(results):
             return
         if any(result.error is not None for result in results):
             return
@@ -468,49 +504,70 @@ class Tray(QSystemTrayIcon):
             self._state.last_seen_news = marker
         self._news_new_count = 0
         self._persist_state()
-        self._update_tooltip()
         self._build_menu()
+        self._update_status_surfaces()
 
     # ------------------------------------------------------------------
     # Status surfaces
 
+    def _update_status_surfaces(self) -> None:
+        self._action_open_run.setVisible(self._active_run() is not None)
+        self._update_status_action()
+        self._update_tooltip()
+
+    def _check_status(self) -> str | None:
+        if self._verifying:
+            if self._offline:
+                return "Verifying updates — waiting for network"
+            return "Verifying updates…"
+        if self._offline:
+            return "Offline — waiting for network"
+        if self._check_thread is not None:
+            return "Checking…"
+        return None
+
+    def _package_status(self) -> str:
+        package_total = self._package_total()
+        if package_total > 0:
+            return f"{package_total} update(s) available"
+        failed = any(result.error is not None for result in self._results)
+        if has_package_sources(self._results):
+            return "Update check failed" if failed else "System is up to date"
+        if failed:
+            return "No package sources checked; update check failed"
+        return "No package sources checked"
+
     def _update_tooltip(self) -> None:
         lines = [APP_NAME]
+        run = self._active_run()
+        if run is not None:
+            lines.append(run.monitor_status)
+        checking = self._check_status()
+        if checking is not None:
+            lines.append(checking)
         if self._last_check:
             lines.append(f"Last check: {self._last_check.strftime('%H:%M')}")
         if self._is_snoozed() and self._snooze_until is not None:
             lines.append(snooze_label(self._snooze_until))
-        package_total = self._package_total()
-        reboot_pending = is_reboot_pending(self._updates_by_source())
-        failed_sources = sum(result.error is not None for result in self._results)
-        if package_total > 0:
-            lines.append(f"{package_total} update(s) available")
-            if failed_sources:
+        if run is None and checking is None and self._last_check is not None:
+            lines.append(self._package_status())
+            failed_sources = sum(result.error is not None for result in self._results)
+            if self._package_total() > 0 and failed_sources:
                 lines.append(f"{failed_sources} source check(s) failed")
-        elif any(result.error is not None for result in self._results):
-            lines.append("Update check failed")
-        elif not self._results:
-            lines.append("No update checkers available")
-        else:
-            lines.append("System is up to date")
-        if reboot_pending:
-            lines.append("Reboot required")
-        counts = format_source_counts(self._results)
-        if counts:
-            lines.append(counts)
+            if is_reboot_pending(self._updates_by_source()):
+                lines.append("Reboot required")
+            counts = format_source_counts(self._results)
+            if counts:
+                lines.append(counts)
         if self._news_new_count:
             lines.append(f"{self._news_new_count} new Arch news item(s)")
         self.setToolTip("\n".join(lines))
 
-    def _send_deferred_notifications(self, deferred: list[DeferredNotification]) -> None:
-        latest_results = deferred[-1]["results"]
-        total = total_updates(latest_results)
-        if total == 0:
-            return
+    def _send_deferred_notification(self, results: list[CheckResult], total: int) -> None:
         self._send_update_notification(
-            latest_results,
+            results,
             summary="Updates available after quiet hours",
-            body=f"{total} update(s) currently available\n{format_source_counts(latest_results)}",
+            body=f"{total} update(s) currently available\n{format_source_counts(results)}",
         )
 
     def _send_update_notification(
@@ -543,23 +600,30 @@ class Tray(QSystemTrayIcon):
             self._snooze(self._cfg.tray.snooze_hours)
 
     def _update_status_action(self) -> None:
+        run = self._active_run()
+        if run is not None:
+            self._action_status.setText(run.monitor_status)
+            return
+        checking = self._check_status()
+        if self._verifying and checking is not None:
+            self._action_status.setText(checking)
+            return
         if self._is_snoozed() and self._snooze_until is not None:
             self._action_status.setText(snooze_label(self._snooze_until))
             return
-        package_total = self._package_total()
+        if checking is not None:
+            self._action_status.setText(checking)
+            return
+        if self._last_check is None:
+            self._action_status.setText("Idle")
+            return
+        status = self._package_status()
         failed_sources = sum(result.error is not None for result in self._results)
-        if package_total > 0:
-            status = f"{package_total} update(s) available"
-            if failed_sources:
-                status += f"; {failed_sources} source(s) failed"
-        elif any(result.error is not None for result in self._results):
-            status = "Update check failed"
-        elif not self._results:
-            status = "No update checkers available"
-        else:
-            status = "System is up to date"
-        if self._last_check:
-            status = f"{status} — Last check {self._last_check.strftime('%H:%M')}"
+        if self._package_total() > 0 and failed_sources:
+            status += f"; {failed_sources} source(s) failed"
+        if is_reboot_pending(self._updates_by_source()):
+            status += " · Reboot required"
+        status = f"{status} — Last check {self._last_check.strftime('%H:%M')}"
         self._action_status.setText(status)
 
     # ------------------------------------------------------------------
@@ -578,10 +642,10 @@ class Tray(QSystemTrayIcon):
             self._notification_engine.reset_deduplication()
         else:
             self._snooze_until = datetime.now() + timedelta(hours=hours)
+            self._notification_engine.exit_quiet_hours()
             self._snooze_timer.start(hours * 60 * 60 * 1000)
         self._persist_state()
-        self._update_status_action()
-        self._update_tooltip()
+        self._update_status_surfaces()
         if hours is None:
             self._start_check()
 
@@ -620,11 +684,18 @@ class Tray(QSystemTrayIcon):
     # Windows and actions
 
     def _show_updates(self) -> None:
+        if self._verifying:
+            send_message(
+                "Verifying updates", "Package results will be available after the check."
+            )
+            return
         has_errors = any(result.error is not None for result in self._results)
         reboot_pending = is_reboot_pending(self._updates_by_source())
         if not (total_updates(self._results) or has_errors or reboot_pending):
-            if not self._results:
-                send_message("No update checkers", "No supported update source is available.")
+            if self._last_check is None:
+                send_message("No results yet", "Choose Check Now to check for package updates.")
+            elif not has_package_sources(self._results):
+                send_message("No package sources checked", "Check your update source settings.")
             else:
                 send_message("No updates", "Your system is up to date.")
             return
@@ -666,6 +737,8 @@ class Tray(QSystemTrayIcon):
 
     def _apply_config(self, cfg: Config) -> None:
         self._cfg = cfg
+        if not cfg.notifications.enabled:
+            self._notification_engine.exit_quiet_hours()
         try:
             save_config(cfg)
         except OSError as exc:
@@ -680,8 +753,7 @@ class Tray(QSystemTrayIcon):
             self._package_total(), is_reboot_pending(self._updates_by_source()), self._results
         )
         self._build_menu()
-        self._update_status_action()
-        self._update_tooltip()
+        self._update_status_surfaces()
 
     def _run_topgrade(self, extra_args: list[str] | None = None) -> None:
         self._open_run_window(list(extra_args or []))
@@ -690,7 +762,33 @@ class Tray(QSystemTrayIcon):
         self._open_run_window(["--dry-run"], title="Uptray — Dry Run")
 
     def _run_topgrade_terminal(self) -> None:
-        launch_topgrade_in_terminal(self._cfg)
+        if not self._open_current_run():
+            launch_topgrade_in_terminal(self._cfg)
+
+    def _active_run(self) -> RunWindow | None:
+        window = self._run_window
+        return window if window is not None and window.is_active else None
+
+    def _open_current_run(self) -> bool:
+        window = self._active_run()
+        if window is None:
+            return False
+        window.showNormal()
+        window.raise_()
+        window.activateWindow()
+        window.focus_pending_input()
+        return True
+
+    @Slot(str)
+    def _on_monitor_status_changed(self, _status: str) -> None:
+        self._update_status_surfaces()
+
+    def _on_run_window_closed(self, window: RunWindow) -> None:
+        # close() never frees this parentless window: Qt holds lambdas wired to its own
+        # buttons, and they capture it. Each leaked window kept two WebEngine renderers.
+        window.deleteLater()
+        if self._run_window is window:
+            self._run_window = None
 
     def _open_run_window(
         self,
@@ -701,46 +799,59 @@ class Tray(QSystemTrayIcon):
         # Keep a strong reference so the non-modal window is not garbage-collected.
         # Reuse only while a session is still running; finished windows must not
         # block a new dry-run/update request.
-        existing = getattr(self, "_run_window", None)
-        if existing is not None and existing.is_active:
-            # A running window may be hidden (closed mid-run); bring it back.
-            existing.showNormal()
-            existing.raise_()
-            existing.activateWindow()
+        if self._open_current_run():
             return
-        if existing is not None:
-            existing.close()
+        if self._run_window is not None:
+            self._run_window.close()  # finished, so it really closes and is deleted
+        on_run_for_real: Callable[[], None] | None = None
+        if extra_args and "--dry-run" in extra_args:
+            update_args = [arg for arg in extra_args if arg != "--dry-run"]
+            on_run_for_real = (
+                partial(self._run_topgrade, update_args) if update_args else self._run_topgrade
+            )
         window = RunWindow(
             self._cfg,
             extra_args=extra_args,
             title=title,
-            on_finished=lambda _code: QTimer.singleShot(500, lambda: self._start_check(force=True)),
-            # Only shown after a successful --dry-run preview.
-            on_run_for_real=self._run_topgrade,
+            on_finished=self._on_run_finished,
+            on_run_for_real=on_run_for_real,
         )
         self._run_window = window
+        window.monitor_status_changed.connect(self._on_monitor_status_changed)
+        window.closed.connect(partial(self._on_run_window_closed, window))
+        if window.is_active:
+            self.setIcon(self._icon_cache.checking())
+        self._update_status_surfaces()
         window.show()
 
     def _stop_run_window(self) -> None:
-        window = getattr(self, "_run_window", None)
+        window = self._run_window
         if window is not None:
             window.shutdown()
 
     def _quit(self) -> None:
-        window = getattr(self, "_run_window", None)
+        window = self._run_window
         if window is not None and not window.confirm_stop():
             return
         # Qt 6 aborts quit() when a window ignores its close event, and a
         # running RunWindow does; stop it explicitly first.
+        self._closing = True
         self._stop_run_window()
         QApplication.quit()
 
     def shutdown(self) -> None:
         """Release background threads and the notification DBus connection."""
+        self._closing = True
         self._stop_run_window()
-        if self._check_thread is not None and self._check_thread.isRunning():
-            # Qt aborts the process if a running QThread is destroyed at exit.
-            self._check_thread.wait(10_000)
+        # Qt aborts the process if a running QThread is destroyed at exit, but a stuck
+        # check must not hang quitting (and with it logout) forever.
+        thread = self._check_thread
+        if (
+            thread is not None
+            and thread.isRunning()
+            and not thread.wait(_CHECK_SHUTDOWN_TIMEOUT_MS)
+        ):
+            get_logger("tray").warning("Update check still running at quit")
         self._persist_state()
         self._resume_stop.set()
         if self._resume_thread.is_alive():
@@ -748,10 +859,8 @@ class Tray(QSystemTrayIcon):
         self._notification_client.shutdown()
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
-        if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            if self._cfg.tray.click_action == "show_updates":
-                self._show_updates()
-            elif self._cfg.tray.click_action == "run_topgrade":
+        if reason == QSystemTrayIcon.ActivationReason.Trigger and not self._open_current_run():
+            if self._cfg.tray.click_action == "run_topgrade":
                 self._run_topgrade()
             else:
                 self._show_updates()
