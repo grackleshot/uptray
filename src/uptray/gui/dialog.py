@@ -9,6 +9,7 @@ from PySide6.QtGui import (
     QColor,
     QDesktopServices,
     QFontDatabase,
+    QKeyEvent,
     QKeySequence,
     QShortcut,
     QTextCursor,
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from uptray.core.checkers import has_package_sources
 from uptray.core.links import upstream_url
 from uptray.core.run_history import RunSummary, list_runs
 from uptray.core.topgrade_config import ONLY_STEP_FOR_SOURCE
@@ -137,7 +139,15 @@ def _updates_title(total: int, results: list[CheckResult]) -> str:
         return f"{total} update{'s' if total != 1 else ''} available"
     if any(r.error is not None for r in results):
         return "Some sources couldn't be checked"
+    if not has_package_sources(results):
+        return "No package sources checked"
     return "No updates available"
+
+
+def _source_action_label(step: str) -> str:
+    if step == "system":
+        return "Update system packages (pacman + AUR)"
+    return f"Update {step.capitalize()}"
 
 
 class UpdatesDialog(QDialog):
@@ -150,7 +160,6 @@ class UpdatesDialog(QDialog):
         self.setMinimumSize(640, 480)
         self._results = [r for r in results if r.source != "reboot"]
         self._reboot_pending = any(r.source == "reboot" and r.updates for r in results)
-        self._source_of_item: dict[QTreeWidgetItem, str] = {}
         self._on_run: Callable[[], None] | None = None
         self._on_preview: Callable[[], None] | None = None
         self._on_run_only: Callable[[list[str]], None] | None = None
@@ -162,8 +171,7 @@ class UpdatesDialog(QDialog):
 
         total = sum(len(r.updates) for r in self._results)
         counts = [f"{r.source} {len(r.updates)}" for r in self._results if r.updates]
-        subtitle = " · ".join(counts) if counts else "Nothing to update right now"
-        layout.addWidget(_make_header(_updates_title(total, self._results), subtitle))
+        layout.addWidget(_make_header(_updates_title(total, results), " · ".join(counts)))
 
         if self._reboot_pending:
             layout.addWidget(
@@ -175,6 +183,7 @@ class UpdatesDialog(QDialog):
             )
 
         self._filter = QLineEdit()
+        self._filter.setAccessibleName("Filter packages")
         self._filter.setPlaceholderText("Filter packages… (Ctrl+F)")
         self._filter.setClearButtonEnabled(True)
         self._filter.textChanged.connect(self._apply_filter)
@@ -189,29 +198,28 @@ class UpdatesDialog(QDialog):
         self._tree.setRootIsDecorated(True)
         self._tree.setIconSize(QSize(ICON_SM, ICON_SM))
         self._tree.setUniformRowHeights(True)
-        self._tree.itemDoubleClicked.connect(self._on_item_double_clicked)
-        self._tree.setToolTip("Double-click a package to open its project page.")
+        self._tree.itemActivated.connect(self._on_package_activated)
+        self._tree.setToolTip("Double-click a package or press Enter to open its project page.")
         self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._tree.customContextMenuRequested.connect(self._source_menu)
         layout.addWidget(self._tree, 1)
 
-        for result in self._results:
-            if result.updates:
+        for result in results:
+            if result.updates and result.source != "reboot":
                 source_item = QTreeWidgetItem(
                     self._tree, [f"{result.source} ({len(result.updates)})"]
                 )
-                source_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+                source_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
                 self._source_of_header[source_item] = result.source
                 font = source_item.font(0)
                 font.setBold(True)
                 source_item.setFont(0, font)
                 for update in result.updates:
                     branch = f" ({update.branch})" if update.branch else ""
-                    child = QTreeWidgetItem(
+                    QTreeWidgetItem(
                         source_item,
                         [f"{update.name}{branch}", update.old_version, update.new_version],
                     )
-                    self._source_of_item[child] = result.source
             if result.error is not None:
                 tokens = colors()
                 error_item = QTreeWidgetItem(
@@ -230,27 +238,28 @@ class UpdatesDialog(QDialog):
         self._tree.header().setStretchLastSection(False)
         self._tree.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
 
-        muted = colors()["muted"]
-        hint = QLabel(
-            f'<span style="color:{muted}">'
-            "Double-click a package to see what changed upstream.</span>"
-        )
-        layout.addWidget(hint)
-
-        btn_row = QHBoxLayout()
+        source_row = QHBoxLayout()
+        self._btn_source = QPushButton("Update selected source")
+        self._btn_source.clicked.connect(self._run_selected_source)
+        self._tree.currentItemChanged.connect(self._sync_source_action)
+        self._sync_source_action()
+        source_row.addWidget(self._btn_source)
+        source_row.addStretch()
         btn_copy = QPushButton("Copy List")
         btn_copy.setToolTip("Copy the full update list as plain text")
         btn_copy.clicked.connect(self._copy_list)
+        source_row.addWidget(btn_copy)
+        layout.addLayout(source_row)
+
+        btn_row = QHBoxLayout()
         btn_preview = QPushButton("Preview (Dry Run)")
         btn_preview.clicked.connect(self._preview)
         btn_upgrade = QPushButton("Update Now")
         btn_upgrade.setToolTip("Run topgrade to bring everything up to date")
         set_primary(btn_upgrade)
-        btn_upgrade.setDefault(True)
         btn_upgrade.clicked.connect(self._run_topgrade)
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.close)
-        btn_row.addWidget(btn_copy)
         btn_row.addStretch()
         btn_row.addWidget(btn_preview)
         btn_row.addWidget(btn_upgrade)
@@ -273,6 +282,16 @@ class UpdatesDialog(QDialog):
     def set_on_run_only(self, callback: Callable[[list[str]], None]) -> None:
         """Set the callback for "Update only this source" (receives topgrade args)."""
         self._on_run_only = callback
+        self._sync_source_action()
+
+    def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
+        # QDialog otherwise forwards Return from a line edit to its default button.
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not isinstance(
+            self.focusWidget(), QPushButton
+        ):
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def _focus_filter(self) -> None:
         self._filter.setFocus()
@@ -280,18 +299,38 @@ class UpdatesDialog(QDialog):
 
     def _source_menu(self, pos: QPoint) -> None:
         item = self._tree.itemAt(pos)
-        source = self._source_of_header.get(item) if item is not None else None
-        step = ONLY_STEP_FOR_SOURCE.get(source or "")
+        step = self._step_for_item(item)
         if step is None or self._on_run_only is None:
             return
         menu = QMenu(self)
-        # pacman and AUR share topgrade's "system" step, so say so in the label.
-        label = "Update only system packages (pacman + AUR)" if step == "system" else (
-            "Update only this source"
-        )
-        action = menu.addAction(label)
+        action = menu.addAction(_source_action_label(step))
         action.triggered.connect(lambda: self._run_only(step))
         menu.exec(self._tree.viewport().mapToGlobal(pos))
+
+    def _step_for_item(self, item: QTreeWidgetItem | None) -> str | None:
+        if item is None or item.isHidden():
+            return None
+        header = item.parent() or item
+        if header.isHidden():
+            return None
+        return ONLY_STEP_FOR_SOURCE.get(self._source_of_header.get(header, ""))
+
+    def _sync_source_action(self) -> None:
+        step = self._step_for_item(self._tree.currentItem())
+        self._btn_source.setText(_source_action_label(step) if step else "Update selected source")
+        self._btn_source.setToolTip(
+            f"Run topgrade --only {step}. Steps in your Topgrade misc.only list also run."
+            if step else "Select a package or source with a corresponding Topgrade step."
+        )
+        self._btn_source.setEnabled(step is not None and self._on_run_only is not None)
+        self._btn_source.setVisible(
+            any(source in ONLY_STEP_FOR_SOURCE for source in self._source_of_header.values())
+        )
+
+    def _run_selected_source(self) -> None:
+        step = self._step_for_item(self._tree.currentItem())
+        if step:
+            self._run_only(step)
 
     def _run_only(self, step: str) -> None:
         if self._on_run_only:
@@ -319,9 +358,11 @@ class UpdatesDialog(QDialog):
                 if match or not needle:
                     visible_children += 1
             root.setHidden(needle != "" and visible_children == 0)
+        self._sync_source_action()
 
-    def _on_item_double_clicked(self, item: QTreeWidgetItem, _column: int) -> None:
-        source = self._source_of_item.get(item)
+    def _on_package_activated(self, item: QTreeWidgetItem, _column: int) -> None:
+        parent = item.parent()
+        source = self._source_of_header.get(parent) if parent else None
         if source is None:
             return
         package = item.text(0).split(" (")[0]
@@ -352,8 +393,20 @@ def _format_duration(seconds: float) -> str:
 
 def _run_label(run: RunSummary) -> str:
     stamp = run.started.astimezone().strftime("%Y-%m-%d %H:%M")
-    label = f"{stamp} · {_format_duration(run.duration_s)} · {run.outcome}"
-    return f"{label} · {run.failed_steps[0]}" if run.failed_steps else label
+    outcome = {
+        "ok": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled",
+        "incomplete": "Unconfirmed",
+    }[run.outcome]
+    if run.outcome == "failed" and run.returncode is not None:
+        outcome = f"{outcome} (exit {run.returncode})"
+    parts = [stamp, _format_duration(run.duration_s)]
+    if run.failed_steps:
+        parts.append(run.failed_steps[0])
+    if run.transcript_incomplete:
+        parts.append("Incomplete log")
+    return f"{run.scope} · {outcome}\n" + " · ".join(parts)
 
 
 class RunLogsPanel(QWidget):
@@ -375,9 +428,11 @@ class RunLogsPanel(QWidget):
         body = QHBoxLayout()
         body.setSpacing(12)
         self._list = QListWidget()
+        self._list.setWordWrap(True)
         for run in runs:
             label = _run_label(run)
-            self._list.addItem(f"● {label}" if run.path == current else label)
+            item = QListWidgetItem(f"● {label}" if run.path == current else label, self._list)
+            item.setToolTip(label)
         self._list.currentRowChanged.connect(self._show_row)
         body.addWidget(self._list, 2)
         self._text = QTextEdit()
@@ -411,6 +466,9 @@ class RunLogsPanel(QWidget):
         if not 0 <= row < len(self._paths):
             return
         path = self._paths[row]
+        if not path.is_file():
+            self._text.setPlainText("Transcript unavailable for this run.")
+            return
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError as exc:

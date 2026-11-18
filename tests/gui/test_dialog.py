@@ -9,16 +9,20 @@ import pytest
 from uptray.core.history import PackageChange, UpgradeSession
 from uptray.core.maintenance import MaintenanceFinding
 from uptray.core.models import CheckResult, Update
+from uptray.core.run_history import RunSummary
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QKeySequence, QShortcut  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QTreeWidget  # noqa: E402
 
 from uptray.core.topgrade_config import ONLY_STEP_FOR_SOURCE  # noqa: E402
 from uptray.gui.dialog import (  # noqa: E402
     HistoryDialog,
     MaintenanceDialog,
+    RunLogsPanel,
     UpdatesDialog,
 )
 
@@ -58,7 +62,7 @@ def test_updates_dialog_double_click_opens_upstream_url(
         CheckResult(source="aur", updates=[Update("paru-bin", "1", "2", "aur")]),
     ]
     dialog = UpdatesDialog(results)
-    dialog._on_item_double_clicked(dialog._tree.topLevelItem(0).child(0), 0)
+    dialog._tree.itemActivated.emit(dialog._tree.topLevelItem(0).child(0), 0)
 
     assert opened == ["https://aur.archlinux.org/packages/paru-bin/"]
 
@@ -143,6 +147,22 @@ def test_history_dialog_has_runs_tab_with_clean_text(qapp, tmp_path) -> None:  #
     assert "\x1b" not in runs._text.toPlainText()
 
 
+def test_saved_failure_is_visible_even_when_transcript_is_missing(
+    qapp, tmp_path, monkeypatch  # noqa: ANN001
+) -> None:
+    summary = RunSummary(
+        path=tmp_path / "missing.log", started=datetime.now(timezone.utc), duration_s=15,
+        scope="Preview Flatpak", outcome="failed", returncode=2, failed_steps=("Flatpak",),
+        transcript_incomplete=True,
+    )
+    monkeypatch.setattr("uptray.gui.dialog.list_runs", lambda _dir: [summary])
+    runs = RunLogsPanel(runs_dir=tmp_path)
+    label = runs._list.item(0).text()
+    assert "Preview Flatpak · Failed (exit 2)" in label
+    assert "Incomplete log" in label
+    assert "Transcript unavailable" in runs._text.toPlainText()
+
+
 def _only_dialog(source: str) -> tuple[UpdatesDialog, list[list[str]]]:
     dialog = UpdatesDialog([CheckResult(source=source, updates=[Update("p", "1", "2", source)])])
     calls: list[list[str]] = []
@@ -178,6 +198,40 @@ def test_updates_dialog_ctrl_f_focuses_filter(qapp) -> None:  # noqa: ANN001
     shortcut.activated.emit()
     assert dialog.focusWidget() is dialog._filter
     dialog.close()
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter])
+def test_enter_in_filter_keeps_dialog_open(qapp, key) -> None:  # noqa: ANN001
+    dialog, scoped_runs = _only_dialog("flatpak")
+    runs: list[str] = []
+    dialog.set_on_run(lambda: runs.append("update"))
+    dialog.set_on_preview(lambda: runs.append("preview"))
+    dialog.show()
+    dialog._focus_filter()
+    QTest.keyClicks(dialog._filter, "p")
+    QTest.keyClick(dialog._filter, key)
+    assert dialog.isVisible()
+    assert not runs and not scoped_runs
+    dialog.close()
+
+
+def test_keyboard_source_action_uses_selected_visible_scope(qapp) -> None:  # noqa: ANN001
+    dialog, calls = _only_dialog("flatpak")
+    dialog.show()
+    tree = dialog._tree
+    tree.setFocus()
+    QTest.keyClick(tree, Qt.Key.Key_Home)
+    assert tree.currentItem().text(0) == "flatpak (1)"
+    assert dialog._btn_source.text() == "Update Flatpak"
+    dialog._filter.setText("no match")
+    assert not dialog._btn_source.isEnabled()
+    dialog._filter.clear()
+    tree.setFocus()
+    QTest.keyClick(tree, Qt.Key.Key_Tab)
+    assert dialog.focusWidget() is dialog._btn_source
+    QTest.keyClick(dialog._btn_source, Qt.Key.Key_Return)
+    assert calls == [["--only", "flatpak"]]
+    assert not dialog.isVisible()
 
 
 @pytest.mark.parametrize(

@@ -53,7 +53,7 @@ def _topgrade_d_dir() -> Path:
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
-    """Load one TOML file, returning {} when missing or unparsable."""
+    """Load one TOML file, returning {} when missing."""
     if not path.is_file():
         return {}
     try:
@@ -66,12 +66,17 @@ def _load_toml(path: Path) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
-    """Recursively merge ``override`` into ``base``; override values win."""
+def _deep_merge(
+    base: dict[str, Any], override: dict[str, Any], *, section: str = ""
+) -> dict[str, Any]:
+    """Merge tables, preserving Topgrade's additive step filters across files."""
     merged = dict(base)
     for key, value in override.items():
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _deep_merge(merged[key], value)
+            merged[key] = _deep_merge(merged[key], value, section=key)
+        elif section == "misc" and key in {"only", "disable"} and isinstance(value, list):
+            previous = merged.get(key)
+            merged[key] = value + previous if isinstance(previous, list) else value
         else:
             merged[key] = value
     return merged
@@ -89,8 +94,9 @@ def load_topgrade_config(path: Path | None = None) -> dict[str, Any]:
     merged: dict[str, Any] = {}
     dropin_dir = _topgrade_d_dir()
     if dropin_dir.is_dir():
-        for dropin in sorted(dropin_dir.glob("*.toml")):
-            merged = _deep_merge(merged, _load_toml(dropin))
+        for dropin in sorted(dropin_dir.iterdir()):
+            if dropin.is_file() and dropin.name.lower() != ".ds_store":
+                merged = _deep_merge(merged, _load_toml(dropin))
 
     main = find_topgrade_toml()
     if main is not None:

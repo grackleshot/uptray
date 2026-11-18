@@ -35,9 +35,8 @@ def test_load_topgrade_config_merges_topgrade_d_then_main_file(
 
     merged = load_topgrade_config()
 
-    # Lists from the main file replace drop-in lists; nested tables merge.
     assert merged["git"] == {"repos": ["a"]}
-    assert merged["misc"]["disable"] == ["pacman"]
+    assert merged["misc"]["disable"] == ["pacman", "firmware", "flatpak"]
 
 
 def test_get_disabled_steps_returns_false_top_level_steps_lowercased() -> None:
