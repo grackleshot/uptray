@@ -111,6 +111,26 @@ def test_history_dialog_lists_sessions_newest_first(qapp) -> None:  # noqa: ANN0
     assert "installed newpkg (1.0)" in dialog._detail.toPlainText()
 
 
+def test_history_dialog_shows_downgrade_and_reinstall(qapp) -> None:  # noqa: ANN001
+    started = datetime(2026, 11, 6, 10, 0, tzinfo=timezone.utc)
+    session = UpgradeSession(
+        started=started,
+        finished=started,
+        changes=[
+            PackageChange("downgraded", "mesa", "24.1.0-1", "24.0.1-1"),
+            PackageChange("reinstalled", "bash", "", "5.2.026-1"),
+        ],
+    )
+    dialog = HistoryDialog([session])
+
+    label = dialog._list.item(0).text()
+    assert "1 downgraded" in label
+    assert "1 reinstalled" in label
+    detail = dialog._detail.toPlainText()
+    assert "downgraded mesa (24.1.0-1 → 24.0.1-1)" in detail
+    assert "reinstalled bash (5.2.026-1)" in detail
+
+
 def test_history_dialog_empty_state(qapp) -> None:  # noqa: ANN001
     dialog = HistoryDialog([])
 
