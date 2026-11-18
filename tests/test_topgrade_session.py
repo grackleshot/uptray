@@ -289,14 +289,12 @@ def test_transcript_errors_do_not_change_child_status(
                 raise OSError("transcript close failed")
 
     log_file = BrokenLog()
-    original_open = Path.open
 
-    def fake_open(path, mode="r", *args, **kwargs):  # type: ignore[no-untyped-def]
-        if path == log_path and mode == "ab":
-            return log_file
-        return original_open(path, mode, *args, **kwargs)
+    def fake_open(path: Path) -> BrokenLog:
+        assert path == log_path
+        return log_file
 
-    monkeypatch.setattr(Path, "open", fake_open)
+    monkeypatch.setattr("uptray.core.topgrade_session._open_private_append", fake_open)
     session = TopgradeSession(
         ["/bin/sh", "-c", "echo output; exit 3"],
         log_path=log_path,
@@ -448,7 +446,7 @@ def test_sudo_askpass_wrapper_invokes_real_sudo_with_dash_a(tmp_path: Path) -> N
     real = tmp_path / "real-sudo"
     real.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
     real.chmod(0o755)
-    wrap_dir = Path(_sudo_askpass_wrapper_dir(str(real)))
+    wrap_dir = Path(_sudo_askpass_wrapper_dir(str(real), tmp_path))
     wrapped = wrap_dir / "sudo"
     assert wrapped.is_file()
     import subprocess
@@ -612,11 +610,96 @@ def test_sudo_helpers_never_use_a_predictable_tmp_dir(monkeypatch: pytest.Monkey
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     topgrade_session._private_dir.cache_clear()
     try:
-        wrapper_dir = Path(topgrade_session._sudo_askpass_wrapper_dir("/usr/bin/sudo"))
-        base = wrapper_dir.parent
+        base = topgrade_session._private_dir()
         assert base != Path(f"/tmp/uptray-{os.getuid()}")
         assert stat.S_IMODE(base.stat().st_mode) == 0o700
         assert base.stat().st_uid == os.getuid()
+    finally:
+        topgrade_session._private_dir.cache_clear()
+
+
+def test_session_does_not_use_forkpty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import warnings
+
+    def fail_forkpty(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("forkpty should not be used")
+
+    monkeypatch.setattr("uptray.core.topgrade_session.pty.fork", fail_forkpty)
+    stop = threading.Event()
+    threading.Thread(target=stop.wait, daemon=True).start()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        session = TopgradeSession(
+            ["/bin/echo", "hi"], runs_dir=tmp_path, enable_askpass=False
+        )
+        session.start()
+        assert session.wait(timeout=5) == 0
+        session.close()
+    stop.set()
+    assert not any("forkpty" in str(item.message) for item in caught)
+
+
+def test_transcript_and_runs_directory_are_private(tmp_path: Path) -> None:
+    import stat
+
+    runs = tmp_path / "runs"
+    runs.mkdir(mode=0o755)
+    log_path = runs / "explicit.log"
+    log_path.write_bytes(b"old\n")
+    log_path.chmod(0o644)
+    session = TopgradeSession(
+        ["/bin/echo", "secret"],
+        log_path=log_path,
+        runs_dir=runs,
+        enable_askpass=False,
+    )
+    session.start()
+    session.wait(timeout=5)
+    session.close()
+
+    assert stat.S_IMODE(runs.stat().st_mode) == 0o700
+    assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+    assert "secret" in log_path.read_text(encoding="utf-8")
+
+
+def test_askpass_helpers_are_removed_when_the_session_ends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uptray.core import topgrade_session
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    topgrade_session._private_dir.cache_clear()
+    try:
+        session = TopgradeSession(
+            ["/bin/true"], runs_dir=tmp_path / "runs", enable_askpass=True
+        )
+        session.start()
+        session.wait(timeout=5)
+        session.close()
+        assert list(runtime.glob("uptray-*")) == []
+    finally:
+        topgrade_session._private_dir.cache_clear()
+
+
+def test_failed_spawn_removes_askpass_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uptray.core import topgrade_session
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    topgrade_session._private_dir.cache_clear()
+    try:
+        session = TopgradeSession(
+            ["/no/such/uptray-command"], runs_dir=tmp_path / "runs"
+        )
+        with pytest.raises(OSError):
+            session.start()
+        assert list(runtime.glob("uptray-*")) == []
     finally:
         topgrade_session._private_dir.cache_clear()
 
@@ -665,3 +748,84 @@ def test_progress_prefixed_with_cr_can_end_mid_chunk() -> None:
     events = parse_topgrade_chunk(state, "\r\nnext phase\n")
     steps = [e for e in events if isinstance(e, StepEvent)]
     assert steps[-1].latest_line == "next phase"
+
+
+def _output_text(events: list[object]) -> str:
+    return "".join(event.text for event in events if isinstance(event, OutputChunk))
+
+
+def test_child_has_a_controlling_terminal(tmp_path: Path) -> None:
+    import sys
+
+    events: list[object] = []
+    child = (
+        "import os,signal,sys,time\n"
+        "signal.signal(signal.SIGWINCH, lambda *_a: ("
+        "sys.stdout.write('WINCH\\n'), sys.stdout.flush()))\n"
+        "signal.signal(signal.SIGINT, lambda *_a: ("
+        "sys.stdout.write('INT\\n'), sys.stdout.flush(), sys.exit(0)))\n"
+        "os.close(os.open('/dev/tty', os.O_RDWR))\n"
+        "sys.stdout.write('TTY\\n')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(3)\n"
+        "sys.exit(2)\n"
+    )
+    session = TopgradeSession(
+        [sys.executable, "-c", child],
+        runs_dir=tmp_path,
+        on_event=events.append,
+        enable_askpass=False,
+    )
+    session.start()
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "TTY" not in _output_text(events):
+            time.sleep(0.05)
+        assert "TTY" in _output_text(events)
+        session.resize(40, 120)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "WINCH" not in _output_text(events):
+            time.sleep(0.05)
+        assert "WINCH" in _output_text(events)
+        session.write("\x03")
+        assert session.wait(timeout=5) == 0
+        assert "INT" in _output_text(events)
+    finally:
+        session.close()
+
+
+def test_created_run_parents_are_private(tmp_path: Path) -> None:
+    import stat
+
+    runs = tmp_path / "runs" / "agents"
+    session = TopgradeSession(["/bin/true"], runs_dir=runs, enable_askpass=False)
+    session.start()
+    session.wait(timeout=5)
+    session.close()
+
+    assert stat.S_IMODE((tmp_path / "runs").stat().st_mode) == 0o700
+    assert stat.S_IMODE(runs.stat().st_mode) == 0o700
+
+
+def test_legacy_askpass_files_for_dead_pids_are_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    dead_pid = 1 << 22
+    assert not Path(f"/proc/{dead_pid}").exists()
+    (runtime / f"uptray-askpass-{dead_pid}.sh").write_text("old\n", encoding="utf-8")
+    wrap = runtime / f"uptray-sudo-wrap-{dead_pid}"
+    wrap.mkdir()
+    (wrap / "sudo").write_text("old\n", encoding="utf-8")
+    live = runtime / f"uptray-askpass-{os.getpid()}.sh"
+    live.write_text("live\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    topgrade_session._private_dir.cache_clear()
+    try:
+        assert topgrade_session._private_dir() == runtime
+        assert not (runtime / f"uptray-askpass-{dead_pid}.sh").exists()
+        assert not wrap.exists()
+        assert live.is_file()
+    finally:
+        topgrade_session._private_dir.cache_clear()

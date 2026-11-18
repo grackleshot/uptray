@@ -33,6 +33,29 @@ def test_get_logger_nested_name() -> None:
     assert logger.name == "uptray.cli.main"
 
 
+def test_log_file_is_owner_readable_only(tmp_path: Path, monkeypatch: object) -> None:
+    import stat
+
+    import uptray.core.logging as log_mod
+
+    log_dir = tmp_path / "logs"
+    log_dir.mkdir()
+    existing = log_dir / "log"
+    existing.write_text("old\n", encoding="utf-8")
+    existing.chmod(0o644)
+    rotated = log_dir / "log.1"
+    rotated.write_text("older\n", encoding="utf-8")
+    rotated.chmod(0o644)
+    monkeypatch.setattr(log_mod, "_LOG_DIR", log_dir)
+
+    log_mod.setup_logging()
+    get_logger("engine").info("hello")
+
+    assert stat.S_IMODE(log_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o600
+    assert stat.S_IMODE(rotated.stat().st_mode) == 0o600
+
+
 def test_setup_creates_log_dir(tmp_path: Path, monkeypatch: object) -> None:
     """setup_logging creates the log directory if it doesn't exist."""
     log_dir = tmp_path / "logs"
