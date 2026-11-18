@@ -454,7 +454,12 @@ def _parse_line(state: _ParserState, raw_line: str) -> list[SessionEvent]:
         return events
 
     failure = _FAILURE_RE.match(line)
-    if failure is not None:
+    # Child commands print "X failed: Y" too (gpg, curl); only a known step starts a report.
+    if (
+        failure is not None
+        and not raw_line[:1].isspace()
+        and failure.group("name").strip() in state.steps
+    ):
         name = failure.group("name").strip()
         state.diagnostic_step = name
         state.steps[name] = "failed"

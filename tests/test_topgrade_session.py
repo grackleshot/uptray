@@ -105,6 +105,21 @@ def test_parser_retains_topgrade_error_chain_through_retry_and_summary() -> None
     assert state.failed_step == "Monitor fixture"
 
 
+def test_child_command_failure_line_is_not_a_step_and_keeps_prompts() -> None:
+    state = _ParserState()
+    events = parse_topgrade_chunk(
+        state,
+        "── 12:00:00 - AUR ──\n"
+        "gpg: keyserver receive failed: No data\n"
+        ":: Import PGP key ABCD? [Y/n] ",
+    )
+    assert [e.question for e in events if isinstance(e, PromptRequest)] == [
+        ":: Import PGP key ABCD? [Y/n]"
+    ]
+    assert state.steps == {"AUR": "running"}
+    assert state.failed_step is None
+
+
 def test_summary_resolves_retried_failure_and_ignores_unrelated_step_rows() -> None:
     state = _ParserState()
     events = parse_topgrade_chunk(
