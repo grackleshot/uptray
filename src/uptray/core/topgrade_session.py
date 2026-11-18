@@ -9,6 +9,7 @@ import atexit
 import codecs
 import contextlib
 import errno
+import fcntl
 import functools
 import os
 import pty
@@ -20,6 +21,7 @@ import signal
 import socket
 import stat
 import struct
+import subprocess
 import tempfile
 import termios
 import threading
@@ -29,7 +31,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Literal
+from typing import BinaryIO, Literal
 
 __all__ = [
     "AskpassRequest",
@@ -422,6 +424,8 @@ class TopgradeSession:
 
         self._master_fd: int | None = None
         self._pid: int | None = None
+        self._proc: subprocess.Popen[bytes] | None = None
+        self._helper_dir: Path | None = None
         self._reader: threading.Thread | None = None
         self._askpass_thread: threading.Thread | None = None
         self._stop = threading.Event()
@@ -460,6 +464,7 @@ class TopgradeSession:
         if self._started:
             raise RuntimeError("session already started")
         self._started = True
+        _mkdir_private(self._runs_dir)
         self._log_path.parent.mkdir(parents=True, exist_ok=True)
 
         env = os.environ.copy()
@@ -469,35 +474,44 @@ class TopgradeSession:
         # Prefer our askpass path so sudo prompts stay inside the GUI.
         # sudo only uses SUDO_ASKPASS when invoked with -A, so put a PATH wrapper
         # ahead of the real sudo that always adds -A.
-        if self._enable_askpass:
-            self._start_askpass_server()
-            if self._askpass_sock is not None:
-                env["SUDO_ASKPASS"] = _askpass_launcher()
-                env["UPTRAY_ASKPASS_SOCK"] = str(self._askpass_sock)
-                sudo_bin = shutil.which("sudo", path=env.get("PATH"))
-                if sudo_bin is not None:
-                    wrapper_dir = _sudo_askpass_wrapper_dir(sudo_bin)
-                    env["PATH"] = f"{wrapper_dir}{os.pathsep}{env.get('PATH', '')}"
-
-        pid, master_fd = pty.fork()
-        if pid == 0:  # child
-            child_env = env
+        # openpty + Popen avoids forkpty() in this multi-threaded process.
+        # start_new_session makes the child its own process group, which
+        # cancel() signals. A failed spawn closes the PTY and askpass helpers.
+        try:
+            if self._enable_askpass:
+                self._start_askpass_server()
+                if self._askpass_sock is not None:
+                    helper_dir = self._session_dir()
+                    env["SUDO_ASKPASS"] = _askpass_launcher(helper_dir)
+                    env["UPTRAY_ASKPASS_SOCK"] = str(self._askpass_sock)
+                    sudo_bin = shutil.which("sudo", path=env.get("PATH"))
+                    if sudo_bin is not None:
+                        wrapper_dir = _sudo_askpass_wrapper_dir(sudo_bin, helper_dir)
+                        env["PATH"] = f"{wrapper_dir}{os.pathsep}{env.get('PATH', '')}"
+            master_fd, slave_fd = pty.openpty()
             try:
-                import fcntl
-
-                fcntl.ioctl(0, termios.TIOCSWINSZ, struct.pack("HHHH", *self._size, 0, 0))
-                if self._cwd is not None:
-                    os.chdir(self._cwd)
-                os.execvpe(self._command[0], self._command, child_env)
-            except OSError as exc:
-                message = f"failed to exec {self._command[0]!r}: {exc}\n"
-                os.write(2, message.encode())
-                os._exit(127)
-
-        self._pid = pid
+                _set_pty_size(slave_fd, *self._size)
+                proc = subprocess.Popen(
+                    self._command,
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                    cwd=self._cwd,
+                    env=env,
+                    start_new_session=True,
+                    close_fds=True,
+                )
+            except Exception:
+                os.close(master_fd)
+                os.close(slave_fd)
+                raise
+            os.close(slave_fd)
+        except Exception:
+            self._shutdown_askpass()
+            raise
+        self._proc = proc
+        self._pid = proc.pid
         self._master_fd = master_fd
-        # pty.fork() already makes the child a session/process-group leader;
-        # do not race a parent-side setpgid() against the child's setsid().
 
         self._reader = threading.Thread(
             target=self._read_loop,
@@ -585,7 +599,7 @@ class TopgradeSession:
         assert self._master_fd is not None
         master_fd = self._master_fd
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
-        with self._log_path.open("ab") as log_file:
+        with _open_private_append(self._log_path) as log_file:
             while not self._stop.is_set():
                 try:
                     ready, _, _ = select.select([master_fd], [], [], 0.2)
@@ -622,9 +636,8 @@ class TopgradeSession:
                     self._emit(event)
 
         code = self._wait_nonblocking()
-        if code is None and self._pid is not None:
-            _pid, status = os.waitpid(self._pid, 0)
-            code = _decode_wait_status(status)
+        if code is None and self._proc is not None:
+            code = _normalize_returncode(self._proc.wait())
         self._returncode = 0 if code is None else code
         self._emit(
             SessionFinished(
@@ -647,15 +660,13 @@ class TopgradeSession:
         return bool(ready)
 
     def _wait_nonblocking(self) -> int | None:
-        if self._pid is None:
+        proc = self._proc
+        if proc is None:
             return self._returncode
-        try:
-            pid, status = os.waitpid(self._pid, os.WNOHANG)
-        except ChildProcessError:
-            return self._returncode if self._returncode is not None else 0
-        if pid == 0:
+        code = proc.poll()
+        if code is None:
             return None
-        self._returncode = _decode_wait_status(status)
+        self._returncode = _normalize_returncode(code)
         return self._returncode
 
     @staticmethod
@@ -668,8 +679,16 @@ class TopgradeSession:
             return True
         return True
 
+    def _session_dir(self) -> Path:
+        """Private directory for this session's askpass socket and sudo helper."""
+        if self._helper_dir is None:
+            self._helper_dir = Path(
+                tempfile.mkdtemp(prefix=f"uptray-{os.getpid()}-", dir=_private_dir())
+            )
+        return self._helper_dir
+
     def _start_askpass_server(self) -> None:
-        sock_path = _private_dir() / f"uptray-askpass-{os.getpid()}-{time.time_ns()}.sock"
+        sock_path = self._session_dir() / "askpass.sock"
         with contextlib.suppress(FileNotFoundError):
             sock_path.unlink()
         server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -737,14 +756,55 @@ class TopgradeSession:
             with contextlib.suppress(FileNotFoundError, OSError):
                 self._askpass_sock.unlink()
             self._askpass_sock = None
+        helper = self._helper_dir
+        self._helper_dir = None
+        if helper is not None:
+            shutil.rmtree(helper, ignore_errors=True)
 
 
-def _decode_wait_status(status: int) -> int:
-    if os.WIFEXITED(status):
-        return int(os.WEXITSTATUS(status))
-    if os.WIFSIGNALED(status):
-        return 128 + int(os.WTERMSIG(status))
-    return 1
+def _normalize_returncode(code: int) -> int:
+    """Match the historical 128+signal convention for signal deaths."""
+    if code < 0:
+        return 128 + (-code)
+    return code
+
+
+def _set_pty_size(fd: int, rows: int, cols: int) -> None:
+    winsize = struct.pack("HHHH", max(1, rows), max(1, cols), 0, 0)
+    fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
+
+
+def _mkdir_private(path: Path) -> None:
+    """Create a directory and leave it readable only by the owner."""
+    path.mkdir(parents=True, exist_ok=True)
+    _restrict(path, 0o700)
+
+
+def _restrict(path: Path, mode: int) -> None:
+    try:
+        current = path.stat().st_mode
+    except OSError:
+        return
+    if current & 0o077:
+        with contextlib.suppress(OSError):
+            path.chmod(mode)
+
+
+def _open_private_append(path: Path) -> BinaryIO:
+    """Open a transcript for append, creating it as mode 0600."""
+    fd = os.open(path, os.O_CREAT | os.O_APPEND | os.O_WRONLY, 0o600)
+    try:
+        if os.fstat(fd).st_mode & 0o077:
+            os.fchmod(fd, 0o600)
+    except OSError:
+        pass
+    return os.fdopen(fd, "ab")
+
+
+def _write_private_executable(path: Path, text: str) -> None:
+    fd = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o700)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(text)
 
 
 def private_runtime_dir() -> Path | None:
@@ -776,7 +836,7 @@ def _private_dir() -> Path:
     return path
 
 
-def _askpass_launcher() -> str:
+def _askpass_launcher(directory: Path | None = None) -> str:
     """Write a tiny SUDO_ASKPASS script that talks to our Unix socket."""
     import sys
 
@@ -788,22 +848,24 @@ def _askpass_launcher() -> str:
         "s.sendall(prompt.encode());"
         "sys.stdout.write(s.recv(4096).decode())"
     )
-    helper = _private_dir() / f"uptray-askpass-{os.getpid()}.sh"
-    helper.write_text(f"#!/bin/sh\nexec {sys.executable} -c {script!r} \"$@\"\n", encoding="utf-8")
-    helper.chmod(0o700)
+    base = directory or _private_dir()
+    helper = base / "uptray-askpass.sh"
+    _write_private_executable(
+        helper, f"#!/bin/sh\nexec {sys.executable} -c {script!r} \"$@\"\n"
+    )
     return str(helper)
 
 
-def _sudo_askpass_wrapper_dir(real_sudo: str) -> str:
+def _sudo_askpass_wrapper_dir(real_sudo: str, directory: Path | None = None) -> str:
     """Return a PATH directory containing a ``sudo`` that always passes ``-A``."""
-    wrapper_dir = _private_dir() / f"uptray-sudo-wrap-{os.getpid()}"
+    base = directory or _private_dir()
+    name = "sudo-wrap" if directory is not None else f"uptray-sudo-wrap-{os.getpid()}"
+    wrapper_dir = base / name
     wrapper_dir.mkdir(parents=True, exist_ok=True)
-    wrapper = wrapper_dir / "sudo"
-    wrapper.write_text(
+    _write_private_executable(
+        wrapper_dir / "sudo",
         "#!/bin/sh\n"
         # Avoid recursing into this wrapper if PATH still points here.
         f"exec {real_sudo} -A \"$@\"\n",
-        encoding="utf-8",
     )
-    wrapper.chmod(0o700)
     return str(wrapper_dir)

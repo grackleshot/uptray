@@ -369,6 +369,92 @@ def test_sudo_helpers_never_use_a_predictable_tmp_dir(monkeypatch: pytest.Monkey
         topgrade_session._private_dir.cache_clear()
 
 
+def test_session_does_not_use_forkpty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+    import warnings
+
+    def fail_forkpty(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("forkpty should not be used")
+
+    monkeypatch.setattr("uptray.core.topgrade_session.pty.fork", fail_forkpty)
+    stop = threading.Event()
+    threading.Thread(target=stop.wait, daemon=True).start()
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        session = TopgradeSession(
+            ["/bin/echo", "hi"], runs_dir=tmp_path, enable_askpass=False
+        )
+        session.start()
+        assert session.wait(timeout=5) == 0
+        session.close()
+    stop.set()
+    assert not any("forkpty" in str(item.message) for item in caught)
+
+
+def test_transcript_and_runs_directory_are_private(tmp_path: Path) -> None:
+    import stat
+
+    runs = tmp_path / "runs"
+    runs.mkdir(mode=0o755)
+    log_path = runs / "explicit.log"
+    log_path.write_bytes(b"old\n")
+    log_path.chmod(0o644)
+    session = TopgradeSession(
+        ["/bin/echo", "secret"],
+        log_path=log_path,
+        runs_dir=runs,
+        enable_askpass=False,
+    )
+    session.start()
+    session.wait(timeout=5)
+    session.close()
+
+    assert stat.S_IMODE(runs.stat().st_mode) == 0o700
+    assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+    assert "secret" in log_path.read_text(encoding="utf-8")
+
+
+def test_askpass_helpers_are_removed_when_the_session_ends(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uptray.core import topgrade_session
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    topgrade_session._private_dir.cache_clear()
+    try:
+        session = TopgradeSession(
+            ["/bin/true"], runs_dir=tmp_path / "runs", enable_askpass=True
+        )
+        session.start()
+        session.wait(timeout=5)
+        session.close()
+        assert list(runtime.glob("uptray-*")) == []
+    finally:
+        topgrade_session._private_dir.cache_clear()
+
+
+def test_failed_spawn_removes_askpass_helpers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from uptray.core import topgrade_session
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    topgrade_session._private_dir.cache_clear()
+    try:
+        session = TopgradeSession(
+            ["/no/such/uptray-command"], runs_dir=tmp_path / "runs"
+        )
+        with pytest.raises(OSError):
+            session.start()
+        assert list(runtime.glob("uptray-*")) == []
+    finally:
+        topgrade_session._private_dir.cache_clear()
+
+
 def test_initial_pty_size_reaches_child(tmp_path: Path) -> None:
     events: list[object] = []
     session = TopgradeSession(
