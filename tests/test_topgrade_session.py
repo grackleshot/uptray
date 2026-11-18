@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import codecs
 import os
+import pty
+import socket
+import threading
 import time
 from pathlib import Path
 
 import pytest
 
+from uptray.core import topgrade_session
+from uptray.core.run_history import list_runs
 from uptray.core.topgrade_session import (
+    AskpassExpired,
+    AskpassRequest,
     OutputChunk,
     PromptCleared,
     PromptRequest,
@@ -17,6 +24,7 @@ from uptray.core.topgrade_session import (
     SessionFinished,
     StepEvent,
     TopgradeSession,
+    TranscriptWarning,
     _ParserState,
     build_diagnose_prompt,
     list_run_logs,
@@ -65,6 +73,83 @@ def test_parser_plain_separator_and_skip() -> None:
         for e in events
     )
     assert any(isinstance(e, StepEvent) and e.status == "skipped" for e in events)
+
+
+def test_parser_retains_topgrade_error_chain_through_retry_and_summary() -> None:
+    state = _ParserState()
+    events = parse_topgrade_chunk(
+        state,
+        "── 21:28:55 - Monitor fixture ──\r\n"
+        "Monitor fixture failed: \r\n"
+        "   0: \x1b[91mCommand failed: `/bin/sh -c 'sleep 0.4 && false'`\x1b[0m\r\n"
+        "   1: \x1b[91m`/bin/sh` failed: exit status: 1\x1b[0m\r\n\r\n"
+        "Location:\r\n"
+        "   \x1b[35msrc/steps/generic.rs\x1b[0m:1637\x1b]0;Topgrade - Awaiting user\a\r\n"
+        "Retry? (y)es/(N)o/(s)hell/(q)uit",
+    )
+    (retry,) = [event for event in events if isinstance(event, RetryPrompt)]
+    assert retry.step_name == "Monitor fixture"
+    events.extend(parse_topgrade_chunk(
+        state, "\r\n── 21:28:55 - Summary ──\r\nMonitor fixture: FAILED\r\n",
+    ))
+    steps = [event for event in events if isinstance(event, StepEvent)]
+    failed = [event for event in steps if event.status == "failed"]
+    expected_reason = (
+        "0: Command failed: `/bin/sh -c 'sleep 0.4 && false'`\n"
+        "1: `/bin/sh` failed: exit status: 1\n"
+        "Location:\nsrc/steps/generic.rs:1637"
+    )
+    assert failed[-2].reason == failed[-1].reason == expected_reason
+    assert {event.name for event in steps} == {"Monitor fixture"}
+    assert not any(event.status == "succeeded" for event in steps)
+    assert state.failed_step == "Monitor fixture"
+
+
+def test_child_command_failure_line_is_not_a_step_and_keeps_prompts() -> None:
+    state = _ParserState()
+    events = parse_topgrade_chunk(
+        state,
+        "── 12:00:00 - AUR ──\n"
+        "gpg: keyserver receive failed: No data\n"
+        ":: Import PGP key ABCD? [Y/n] ",
+    )
+    assert [e.question for e in events if isinstance(e, PromptRequest)] == [
+        ":: Import PGP key ABCD? [Y/n]"
+    ]
+    assert state.steps == {"AUR": "running"}
+    assert state.failed_step is None
+
+
+def test_summary_resolves_retried_failure_and_ignores_unrelated_step_rows() -> None:
+    state = _ParserState()
+    events = parse_topgrade_chunk(
+        state,
+        "── Demo ──\n"
+        "some subprocess: OK\n"
+        "Demo failed: first attempt failed\n"
+        "Retry? (y)es/(N)o/(s)hell/(q)uit\n"
+        "── Demo ──\n"
+        "── Summary ──\n"
+        "Demo: OK\n",
+    )
+    assert state.steps == {"Demo": "succeeded"}
+    assert state.failed_step is None
+    assert [
+        event.latest_line for event in events
+        if isinstance(event, StepEvent) and event.status == "succeeded"
+    ] == ["Demo: OK"]
+
+
+def test_step_outcome_stays_unconfirmed_until_summary() -> None:
+    state = _ParserState()
+    events = parse_topgrade_chunk(
+        state, "── Demo ──\nwork\n── Flatpak ──\n── Summary ──\nDemo: FAILED\nFlatpak: OK\n",
+    )
+    assert [
+        event.status for event in events
+        if isinstance(event, StepEvent) and event.name == "Demo"
+    ] == ["running", "running", "ended", "failed"]
+    assert state.steps == {"Demo": "failed", "Flatpak": "succeeded"}
 
 
 @pytest.mark.parametrize(
@@ -123,6 +208,147 @@ def test_session_writes_log_and_emits_finish(tmp_path: Path) -> None:
     assert any(isinstance(e, SessionFinished) and e.returncode == 0 for e in events)
 
 
+def test_session_opens_transcript_before_spawning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blocked_path = tmp_path / "directory.log"
+    blocked_path.mkdir()
+    session = TopgradeSession(["/bin/true"], log_path=blocked_path, enable_askpass=False)
+
+    def unexpected_fork() -> tuple[int, int]:
+        pytest.fail("fork ran despite transcript open failure")
+
+    monkeypatch.setattr(pty, "fork", unexpected_fork)
+    with pytest.raises(IsADirectoryError):
+        session.start()
+    assert not session.running
+
+
+def test_full_transcript_does_not_interrupt_output_input_or_exit(tmp_path: Path) -> None:
+    full = Path("/dev/full")
+    if not full.exists():
+        pytest.skip("requires /dev/full")
+    prompted = threading.Event()
+    events: list[object] = []
+
+    def collect(event: object) -> None:
+        events.append(event)
+        if isinstance(event, PromptRequest):
+            prompted.set()
+
+    session = TopgradeSession(
+        ["/bin/sh", "-c", "printf 'Continue? [Y/n] '; read reply; echo Answer: \"$reply\"; exit 2"],
+        log_path=full,
+        runs_dir=tmp_path,
+        enable_askpass=False,
+        on_event=collect,
+        extra_args=["--only", "flatpak"],
+    )
+    session.start()
+    try:
+        assert prompted.wait(5)
+        session.write("y\n")
+        assert session.wait(timeout=5) == 2
+    finally:
+        session.close()
+
+    (warning,) = [event for event in events if isinstance(event, TranscriptWarning)]
+    assert warning.transcript_incomplete
+    (finished,) = [event for event in events if isinstance(event, SessionFinished)]
+    assert finished.returncode == 2
+    assert finished.transcript_incomplete
+    assert "Answer: y" in "".join(e.text for e in events if isinstance(e, OutputChunk))
+    (run,) = list_runs(tmp_path)
+    assert run.outcome == "failed"
+    assert run.returncode == 2
+    assert run.transcript_incomplete
+    assert run.scope == "Update Flatpak"
+
+
+@pytest.mark.parametrize("operation", ["write", "close"])
+def test_transcript_errors_do_not_change_child_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, operation: str,
+) -> None:
+    events: list[object] = []
+    log_path = tmp_path / "test.log"
+
+    class BrokenLog:
+        closed = False
+
+        def write(self, data: bytes) -> int:
+            if operation == "write":
+                raise OSError("transcript write failed")
+            return len(data)
+
+        def flush(self) -> None:
+            pass
+
+        def close(self) -> None:
+            self.closed = True
+            if operation == "close":
+                raise OSError("transcript close failed")
+
+    log_file = BrokenLog()
+
+    def fake_open(path: Path) -> BrokenLog:
+        assert path == log_path
+        return log_file
+
+    monkeypatch.setattr("uptray.core.topgrade_session._open_private_append", fake_open)
+    session = TopgradeSession(
+        ["/bin/sh", "-c", "echo output; exit 3"],
+        log_path=log_path,
+        enable_askpass=False,
+        on_event=events.append,
+    )
+    session.start()
+    try:
+        assert session.wait(timeout=5) == 3
+    finally:
+        session.close()
+    assert log_file.closed
+    assert len([e for e in events if isinstance(e, TranscriptWarning)]) == 1
+    (finish,) = [e for e in events if isinstance(e, SessionFinished)]
+    assert finish.transcript_incomplete
+    assert finish.returncode == 3
+    assert "output" in "".join(e.text for e in events if isinstance(e, OutputChunk))
+
+
+def test_parser_failure_keeps_the_terminal_and_log_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ready = threading.Event()
+    events: list[object] = []
+
+    def collect(event: object) -> None:
+        events.append(event)
+        if isinstance(event, TranscriptWarning):
+            ready.set()
+
+    def broken_parse(_state: _ParserState, _text: str) -> list[object]:
+        raise ValueError("bad parser state")
+
+    monkeypatch.setattr(topgrade_session, "parse_topgrade_chunk", broken_parse)
+    session = TopgradeSession(
+        ["/bin/sh", "-c", "printf 'Waiting '; read reply; echo Input: \"$reply\"; exit 4"],
+        runs_dir=tmp_path,
+        enable_askpass=False,
+        on_event=collect,
+    )
+    session.start()
+    try:
+        assert ready.wait(5)
+        session.write("test\n")
+        assert session.wait(timeout=5) == 4
+    finally:
+        session.close()
+    (warning,) = [event for event in events if isinstance(event, TranscriptWarning)]
+    (finish,) = [event for event in events if isinstance(event, SessionFinished)]
+    assert not warning.transcript_incomplete
+    assert not finish.transcript_incomplete
+    assert "Input: test" in session.log_path.read_text()
+
+
 def test_session_cancel_kills_process_group(tmp_path: Path) -> None:
     events: list[object] = []
     script = tmp_path / "sleep.sh"
@@ -141,7 +367,11 @@ def test_session_cancel_kills_process_group(tmp_path: Path) -> None:
     session.close()
 
     assert code is not None and code != 0
-    assert any(isinstance(e, SessionFinished) for e in events)
+    (finished,) = [event for event in events if isinstance(event, SessionFinished)]
+    assert finished.cancelled
+    (run,) = list_runs(tmp_path)
+    assert run.outcome == "cancelled"
+    assert run.returncode == code
 
 
 def test_cancel_sigkills_when_process_group_outlives_leader(
@@ -156,7 +386,6 @@ def test_cancel_sigkills_when_process_group_outlives_leader(
         enable_askpass=False,
     )
     session._pid = 4242
-    session._started = True
     signals: list[int] = []
 
     def fake_killpg(pgid: int, sig: int) -> None:
@@ -217,7 +446,7 @@ def test_sudo_askpass_wrapper_invokes_real_sudo_with_dash_a(tmp_path: Path) -> N
     real = tmp_path / "real-sudo"
     real.write_text("#!/bin/sh\nprintf '%s\\n' \"$@\"\n", encoding="utf-8")
     real.chmod(0o755)
-    wrap_dir = Path(_sudo_askpass_wrapper_dir(str(real)))
+    wrap_dir = Path(_sudo_askpass_wrapper_dir(str(real), tmp_path))
     wrapped = wrap_dir / "sudo"
     assert wrapped.is_file()
     import subprocess
@@ -352,6 +581,27 @@ def test_private_runtime_dir_rejects_shared_or_missing_dirs(
     assert private_runtime_dir() is None
 
 
+def test_askpass_expires_only_the_unanswered_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(topgrade_session, "_ASKPASS_TIMEOUT_S", 0.01)
+    events: list[object] = []
+    session = TopgradeSession(
+        ["/bin/true"], runs_dir=tmp_path, enable_askpass=False, on_event=events.append,
+    )
+
+    helper, server = socket.socketpair()
+    with helper:
+        helper.sendall(b"Password for the first request:")
+        session._handle_askpass_conn(server)
+        assert helper.recv(4096) == b""
+
+    request, expired = events
+    assert isinstance(request, AskpassRequest)
+    assert expired == AskpassExpired(request_id=request.request_id)
+    assert request.request_id not in session._askpass_replies
+
+
 def test_sudo_helpers_never_use_a_predictable_tmp_dir(monkeypatch: pytest.MonkeyPatch) -> None:
     import stat
 
@@ -360,8 +610,7 @@ def test_sudo_helpers_never_use_a_predictable_tmp_dir(monkeypatch: pytest.Monkey
     monkeypatch.delenv("XDG_RUNTIME_DIR", raising=False)
     topgrade_session._private_dir.cache_clear()
     try:
-        wrapper_dir = Path(topgrade_session._sudo_askpass_wrapper_dir("/usr/bin/sudo"))
-        base = wrapper_dir.parent
+        base = topgrade_session._private_dir()
         assert base != Path(f"/tmp/uptray-{os.getuid()}")
         assert stat.S_IMODE(base.stat().st_mode) == 0o700
         assert base.stat().st_uid == os.getuid()
@@ -499,3 +748,84 @@ def test_progress_prefixed_with_cr_can_end_mid_chunk() -> None:
     events = parse_topgrade_chunk(state, "\r\nnext phase\n")
     steps = [e for e in events if isinstance(e, StepEvent)]
     assert steps[-1].latest_line == "next phase"
+
+
+def _output_text(events: list[object]) -> str:
+    return "".join(event.text for event in events if isinstance(event, OutputChunk))
+
+
+def test_child_has_a_controlling_terminal(tmp_path: Path) -> None:
+    import sys
+
+    events: list[object] = []
+    child = (
+        "import os,signal,sys,time\n"
+        "signal.signal(signal.SIGWINCH, lambda *_a: ("
+        "sys.stdout.write('WINCH\\n'), sys.stdout.flush()))\n"
+        "signal.signal(signal.SIGINT, lambda *_a: ("
+        "sys.stdout.write('INT\\n'), sys.stdout.flush(), sys.exit(0)))\n"
+        "os.close(os.open('/dev/tty', os.O_RDWR))\n"
+        "sys.stdout.write('TTY\\n')\n"
+        "sys.stdout.flush()\n"
+        "time.sleep(3)\n"
+        "sys.exit(2)\n"
+    )
+    session = TopgradeSession(
+        [sys.executable, "-c", child],
+        runs_dir=tmp_path,
+        on_event=events.append,
+        enable_askpass=False,
+    )
+    session.start()
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "TTY" not in _output_text(events):
+            time.sleep(0.05)
+        assert "TTY" in _output_text(events)
+        session.resize(40, 120)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and "WINCH" not in _output_text(events):
+            time.sleep(0.05)
+        assert "WINCH" in _output_text(events)
+        session.write("\x03")
+        assert session.wait(timeout=5) == 0
+        assert "INT" in _output_text(events)
+    finally:
+        session.close()
+
+
+def test_created_run_parents_are_private(tmp_path: Path) -> None:
+    import stat
+
+    runs = tmp_path / "runs" / "agents"
+    session = TopgradeSession(["/bin/true"], runs_dir=runs, enable_askpass=False)
+    session.start()
+    session.wait(timeout=5)
+    session.close()
+
+    assert stat.S_IMODE((tmp_path / "runs").stat().st_mode) == 0o700
+    assert stat.S_IMODE(runs.stat().st_mode) == 0o700
+
+
+def test_legacy_askpass_files_for_dead_pids_are_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    dead_pid = 1 << 22
+    assert not Path(f"/proc/{dead_pid}").exists()
+    (runtime / f"uptray-askpass-{dead_pid}.sh").write_text("old\n", encoding="utf-8")
+    wrap = runtime / f"uptray-sudo-wrap-{dead_pid}"
+    wrap.mkdir()
+    (wrap / "sudo").write_text("old\n", encoding="utf-8")
+    live = runtime / f"uptray-askpass-{os.getpid()}.sh"
+    live.write_text("live\n", encoding="utf-8")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    topgrade_session._private_dir.cache_clear()
+    try:
+        assert topgrade_session._private_dir() == runtime
+        assert not (runtime / f"uptray-askpass-{dead_pid}.sh").exists()
+        assert not wrap.exists()
+        assert live.is_file()
+    finally:
+        topgrade_session._private_dir.cache_clear()

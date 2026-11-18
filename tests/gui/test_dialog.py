@@ -9,16 +9,20 @@ import pytest
 from uptray.core.history import PackageChange, UpgradeSession
 from uptray.core.maintenance import MaintenanceFinding
 from uptray.core.models import CheckResult, Update
+from uptray.core.run_history import RunSummary
 
 pytest.importorskip("PySide6")
 
+from PySide6.QtCore import Qt  # noqa: E402
 from PySide6.QtGui import QKeySequence, QShortcut  # noqa: E402
+from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QTreeWidget  # noqa: E402
 
 from uptray.core.topgrade_config import ONLY_STEP_FOR_SOURCE  # noqa: E402
 from uptray.gui.dialog import (  # noqa: E402
     HistoryDialog,
     MaintenanceDialog,
+    RunLogsPanel,
     UpdatesDialog,
 )
 
@@ -58,7 +62,7 @@ def test_updates_dialog_double_click_opens_upstream_url(
         CheckResult(source="aur", updates=[Update("paru-bin", "1", "2", "aur")]),
     ]
     dialog = UpdatesDialog(results)
-    dialog._on_item_double_clicked(dialog._tree.topLevelItem(0).child(0), 0)
+    dialog._tree.itemActivated.emit(dialog._tree.topLevelItem(0).child(0), 0)
 
     assert opened == ["https://aur.archlinux.org/packages/paru-bin/"]
 
@@ -107,6 +111,26 @@ def test_history_dialog_lists_sessions_newest_first(qapp) -> None:  # noqa: ANN0
     assert "installed newpkg (1.0)" in dialog._detail.toPlainText()
 
 
+def test_history_dialog_shows_downgrade_and_reinstall(qapp) -> None:  # noqa: ANN001
+    started = datetime(2026, 11, 6, 10, 0, tzinfo=timezone.utc)
+    session = UpgradeSession(
+        started=started,
+        finished=started,
+        changes=[
+            PackageChange("downgraded", "mesa", "24.1.0-1", "24.0.1-1"),
+            PackageChange("reinstalled", "bash", "", "5.2.026-1"),
+        ],
+    )
+    dialog = HistoryDialog([session])
+
+    label = dialog._list.item(0).text()
+    assert "1 downgraded" in label
+    assert "1 reinstalled" in label
+    detail = dialog._detail.toPlainText()
+    assert "downgraded mesa (24.1.0-1 → 24.0.1-1)" in detail
+    assert "reinstalled bash (5.2.026-1)" in detail
+
+
 def test_history_dialog_empty_state(qapp) -> None:  # noqa: ANN001
     dialog = HistoryDialog([])
 
@@ -141,6 +165,22 @@ def test_history_dialog_has_runs_tab_with_clean_text(qapp, tmp_path) -> None:  #
     assert runs._list.count() == 1
     assert "Summary" in runs._text.toPlainText()
     assert "\x1b" not in runs._text.toPlainText()
+
+
+def test_saved_failure_is_visible_even_when_transcript_is_missing(
+    qapp, tmp_path, monkeypatch  # noqa: ANN001
+) -> None:
+    summary = RunSummary(
+        path=tmp_path / "missing.log", started=datetime.now(timezone.utc), duration_s=15,
+        scope="Preview Flatpak", outcome="failed", returncode=2, failed_steps=("Flatpak",),
+        transcript_incomplete=True,
+    )
+    monkeypatch.setattr("uptray.gui.dialog.list_runs", lambda _dir: [summary])
+    runs = RunLogsPanel(runs_dir=tmp_path)
+    label = runs._list.item(0).text()
+    assert "Preview Flatpak · Failed (exit 2)" in label
+    assert "Incomplete log" in label
+    assert "Transcript unavailable" in runs._text.toPlainText()
 
 
 def _only_dialog(source: str) -> tuple[UpdatesDialog, list[list[str]]]:
@@ -180,6 +220,40 @@ def test_updates_dialog_ctrl_f_focuses_filter(qapp) -> None:  # noqa: ANN001
     dialog.close()
 
 
+@pytest.mark.parametrize("key", [Qt.Key.Key_Return, Qt.Key.Key_Enter])
+def test_enter_in_filter_keeps_dialog_open(qapp, key) -> None:  # noqa: ANN001
+    dialog, scoped_runs = _only_dialog("flatpak")
+    runs: list[str] = []
+    dialog.set_on_run(lambda: runs.append("update"))
+    dialog.set_on_preview(lambda: runs.append("preview"))
+    dialog.show()
+    dialog._focus_filter()
+    QTest.keyClicks(dialog._filter, "p")
+    QTest.keyClick(dialog._filter, key)
+    assert dialog.isVisible()
+    assert not runs and not scoped_runs
+    dialog.close()
+
+
+def test_keyboard_source_action_uses_selected_visible_scope(qapp) -> None:  # noqa: ANN001
+    dialog, calls = _only_dialog("flatpak")
+    dialog.show()
+    tree = dialog._tree
+    tree.setFocus()
+    QTest.keyClick(tree, Qt.Key.Key_Home)
+    assert tree.currentItem().text(0) == "flatpak (1)"
+    assert dialog._btn_source.text() == "Update Flatpak"
+    dialog._filter.setText("no match")
+    assert not dialog._btn_source.isEnabled()
+    dialog._filter.clear()
+    tree.setFocus()
+    QTest.keyClick(tree, Qt.Key.Key_Tab)
+    assert dialog.focusWidget() is dialog._btn_source
+    QTest.keyClick(dialog._btn_source, Qt.Key.Key_Return)
+    assert calls == [["--only", "flatpak"]]
+    assert not dialog.isVisible()
+
+
 @pytest.mark.parametrize(
     ("total", "error", "expected"),
     [
@@ -194,3 +268,42 @@ def test_updates_title(total: int, error: str | None, expected: str) -> None:
     from uptray.gui.dialog import _updates_title
 
     assert _updates_title(total, [CheckResult(source="pacman", error=error)]) == expected
+
+
+def test_run_log_opens_at_the_failure_and_finds_text(qapp, tmp_path) -> None:  # noqa: ANN001
+    from uptray.core.run_metadata import RunMetadata, metadata_path, save_metadata
+    from uptray.gui.dialog import ReviewLogDialog
+
+    runs = tmp_path / "runs"
+    runs.mkdir()
+    log = runs / "20261117T120000Z-1-1.log"
+    log.write_text(
+        "── System update ──\n" + "checking boom-free package\n" * 300
+        + "── Flatpak ──\nFlatpak failed: boom\nlater boom\n",
+        encoding="utf-8",
+    )
+    now = datetime.now(timezone.utc)
+    save_metadata(metadata_path(log), RunMetadata(
+        path=log, scope="Full update", started=now, finished=now, returncode=1,
+        cancelled=False, transcript_incomplete=False, failed_steps=("Flatpak",),
+    ))
+    dialog = ReviewLogDialog(None, runs_dir=runs)
+    dialog.show()
+    panel = dialog._panel
+
+    assert panel._text.textCursor().selectedText() == "Flatpak failed:"
+
+    shortcut = panel.findChild(QShortcut)
+    assert shortcut is not None
+    assert shortcut.key() == QKeySequence(QKeySequence.StandardKey.Find)
+    shortcut.activated.emit()
+    assert dialog.focusWidget() is panel._find
+    QTest.keyClicks(panel._find, "later boom")
+    assert panel._text.textCursor().selectedText() == "later boom"
+    panel._find.setText("boom")
+    first = panel._text.textCursor().position()
+    QTest.keyClick(panel._find, Qt.Key.Key_Return)
+    assert panel._text.textCursor().selectedText() == "boom"
+    assert panel._text.textCursor().position() != first
+    assert dialog.isVisible()  # Return searches again instead of closing the dialog
+    dialog.close()

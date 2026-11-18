@@ -59,9 +59,12 @@ def test_hard_failures_raise(monkeypatch) -> None:  # noqa: ANN001
     try:
         checker.check()
         raised = False
-    except RuntimeError:
+        message = ""
+    except RuntimeError as exc:
         raised = True
+        message = str(exc)
     assert raised
+    assert "network unreachable" in message
 
 
 def test_pikaur_is_supported(monkeypatch) -> None:  # noqa: ANN001

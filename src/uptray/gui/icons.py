@@ -91,6 +91,10 @@ class IconCache:
         """Return the idle-state icon (plain dot, no glyph)."""
         return self._tray_icon("idle")
 
+    def application(self) -> QIcon:
+        """Use the installed app icon or the same update arrow without a badge."""
+        return QIcon.fromTheme("uptray", self._tray_icon("updates"))
+
     def checking(self) -> QIcon:
         """Return the checking-state icon (clock glyph)."""
         return self._tray_icon("checking")

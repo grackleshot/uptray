@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -13,7 +14,9 @@ _TAIL_BYTES = 512 * 1024  # last 512 KiB is plenty for dozens of sessions
 
 _LINE_RE = re.compile(r"^\[(?P<ts>[^\]]+)\] \[ALPM\] (?P<body>.*)$")
 _UPGRADED_RE = re.compile(r"^upgraded (?P<name>\S+) \((?P<old>\S+) -> (?P<new>\S+)\)$")
+_DOWNGRADED_RE = re.compile(r"^downgraded (?P<name>\S+) \((?P<old>\S+) -> (?P<new>\S+)\)$")
 _INSTALLED_RE = re.compile(r"^installed (?P<name>\S+) \((?P<version>\S+)\)$")
+_REINSTALLED_RE = re.compile(r"^reinstalled (?P<name>\S+) \((?P<version>\S+)\)$")
 _REMOVED_RE = re.compile(r"^removed (?P<name>\S+) \((?P<version>\S+)\)$")
 
 
@@ -21,7 +24,7 @@ _REMOVED_RE = re.compile(r"^removed (?P<name>\S+) \((?P<version>\S+)\)$")
 class PackageChange:
     """One package transition inside an upgrade session."""
 
-    action: str  # "upgraded" | "installed" | "removed"
+    action: str  # "upgraded" | "downgraded" | "installed" | "reinstalled" | "removed"
     name: str
     old_version: str
     new_version: str
@@ -37,7 +40,13 @@ class UpgradeSession:
 
     def counts(self) -> dict[str, int]:
         """Count changes by action."""
-        counts = {"upgraded": 0, "installed": 0, "removed": 0}
+        counts = {
+            "upgraded": 0,
+            "downgraded": 0,
+            "installed": 0,
+            "reinstalled": 0,
+            "removed": 0,
+        }
         for change in self.changes:
             counts[change.action] += 1
         return counts
@@ -103,9 +112,12 @@ def parse_pacman_log(
 
 def _read_tail(path: Path) -> str:
     """Read the last _TAIL_BYTES of the log to bound memory on old systems."""
-    data = path.read_bytes()
-    if len(data) > _TAIL_BYTES:
-        data = data[-_TAIL_BYTES:]
+    with path.open("rb") as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - _TAIL_BYTES))
+        data = handle.read(_TAIL_BYTES)
+    if size > _TAIL_BYTES:
         newline = data.find(b"\n")
         data = data[newline + 1 :] if newline != -1 else data
     return data.decode("utf-8", errors="replace")
@@ -127,6 +139,14 @@ def _parse_change(body: str) -> PackageChange | None:
             old_version=upgraded.group("old"),
             new_version=upgraded.group("new"),
         )
+    downgraded = _DOWNGRADED_RE.match(body)
+    if downgraded:
+        return PackageChange(
+            action="downgraded",
+            name=downgraded.group("name"),
+            old_version=downgraded.group("old"),
+            new_version=downgraded.group("new"),
+        )
     installed = _INSTALLED_RE.match(body)
     if installed:
         return PackageChange(
@@ -134,6 +154,14 @@ def _parse_change(body: str) -> PackageChange | None:
             name=installed.group("name"),
             old_version="",
             new_version=installed.group("version"),
+        )
+    reinstalled = _REINSTALLED_RE.match(body)
+    if reinstalled:
+        return PackageChange(
+            action="reinstalled",
+            name=reinstalled.group("name"),
+            old_version="",
+            new_version=reinstalled.group("version"),
         )
     removed = _REMOVED_RE.match(body)
     if removed:
